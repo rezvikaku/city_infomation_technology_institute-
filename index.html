@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট - ভর্তি চলছে</title>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Firestore লগিং ডিবাগ মোডে সেট করা হলো
+        setLogLevel('Debug');
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            const app = initializeApp(firebaseConfig);
+            window.db = getFirestore(app);
+            window.auth = getAuth(app);
+        } else {
+            console.error("Firebase Configuration is missing.");
+        }
+
+        // Auth Listener এবং ইনিশিয়ালাইজেশন
+        window.isAuthReady = false;
+        window.currentUserId = null;
+        window.currentUserRole = 'guest';
+
+        if (window.auth) {
+            onAuthStateChanged(window.auth, async (user) => {
+                if (user) {
+                    window.currentUserId = user.uid;
+                    // ইউজার রোল Firestore থেকে লোড করা
+                    const userRef = doc(window.db, `artifacts/${appId}/users/${user.uid}/user_data/profile`);
+                    const docSnap = await getDoc(userRef);
+                    
+                    if (docSnap.exists()) {
+                        window.currentUserRole = docSnap.data().role || 'student';
+                    } else {
+                        // যদি প্রোফাইল ডেটা না থাকে, ডিফল্ট রোল 'student'
+                        window.currentUserRole = 'student'; 
+                    }
+                    console.log("Logged in user:", user.uid, "Role:", window.currentUserRole);
+                } else {
+                    window.currentUserId = crypto.randomUUID(); // আনঅথেন্টিকেটেড ইউজার
+                    window.currentUserRole = 'guest';
+                    console.log("User is signed out or anonymous.");
+                }
+                window.isAuthReady = true;
+                updateUIForUser();
+            });
+
+            // কাস্টম টোকেন বা অ্যানোনিমাস সাইন-ইন
+            const initAuth = async () => {
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(window.auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(window.auth);
+                    }
+                } catch (error) {
+                    console.error("Initial authentication failed:", error);
+                }
+            };
+            initAuth();
+        }
+    </script>
+    <!-- Tailwind CSS লোড করা হচ্ছে -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome (Facebook icon এর জন্য) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Baloo+Da+2:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ফন্ট সেট করা হচ্ছে: বাংলা লেখার জন্য 'Baloo Da 2' ব্যবহার করা হলো */
+        body {
+            font-family: 'Baloo Da 2', 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .section-header {
+            border-bottom: 4px solid #10b981; /* Emerald-500 */
+            padding-bottom: 8px;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+        /* কাস্টম অ্যানিমেশনের জন্য স্টাইল */
+        .fade-in {
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+        }
+        .fade-in.appear {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .card-hover:hover {
+            transform: translateY(-5px);
+            transition: transform 0.3s ease;
+        }
+        .animate-hero {
+            animation: fadeInDown 1s ease-out;
+        }
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                transform: translateY(0);
+            }
+        }
+        /* মডাল স্টাইল */
+        .modal {
+            display: none; /* ডিফল্টভাবে লুকানো */
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.6);
+            padding-top: 60px;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto; 
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%; 
+            max-width: 500px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .close-btn {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .close-btn:hover,
+        .close-btn:focus {
+            color: #000;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        /* Loader style for AI button */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #10b981; /* Emerald-500 */
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- হেডার/নেভিগেশন বার -->
+    <header class="bg-indigo-700 text-white shadow-lg sticky top-0 z-10">
+        <div class="container mx-auto p-4 flex justify-between items-center">
+            <!-- লোগো: শুধুমাত্র পূর্ণ নাম ব্যবহার করে -->
+            <a href="#home" class="flex items-center hover:text-amber-300 transition duration-300">
+                <div class="leading-tight text-left">
+                    <h1 class="text-lg md:text-xl font-extrabold text-amber-400">
+                        সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট
+                    </h1>
+                    <p class="text-xs text-indigo-200 block">
+                        স্কুল এন্ড কলেজ | স্থাপিত ২০১১ (১৪ বছরের পথচলা)
+                    </p>
+                </div>
+            </a>
+            <nav class="flex space-x-2 md:space-x-6 text-lg items-center">
+                <!-- রেসপনসিভ নেভিগেশন লিংকস -->
+                <a href="#home" class="hidden md:block hover:text-amber-300 transition duration-300">হোম</a>
+                <a href="#courses" class="hidden md:block hover:text-amber-300 transition duration-300">কোর্সসমূহ</a>
+                <a href="#features" class="hidden md:block hover:text-amber-300 transition duration-300">বৈশিষ্ট্য</a>
+                <a href="#contact" class="hidden md:block hover:text-amber-300 transition duration-300">যোগাযোগ</a>
+                
+                <!-- ইউজার অ্যাকশন বাটন -->
+                <div id="auth-buttons">
+                    <button id="signup-btn" class="bg-green-500 text-white px-3 py-1 rounded-full font-bold hover:bg-green-400 transition duration-300 text-sm md:text-base">
+                        সাইনআপ
+                    </button>
+                    <button id="login-btn" class="bg-amber-400 text-indigo-900 px-3 py-1 rounded-full font-bold hover:bg-amber-300 transition duration-300 text-sm md:text-base ml-2">
+                        লগইন
+                    </button>
+                </div>
+
+                <!-- লগইন করার পর ড্যাশবোর্ড ও সাইনআউট -->
+                <div id="user-info" class="hidden items-center">
+                    <span id="welcome-message" class="text-amber-300 text-sm md:text-base mr-3"></span>
+                    <button id="signout-btn" class="bg-red-500 text-white px-3 py-1 rounded-full font-bold hover:bg-red-400 transition duration-300 text-sm md:text-base">
+                        সাইনআউট
+                    </button>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- লগইন/সাইনআপ মডাল (Modal) -->
+    <div id="auth-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h4 id="auth-title" class="text-2xl font-bold text-indigo-700 mb-4 text-center">ইউজার সাইনআপ</h4>
+            <p id="auth-error" class="text-red-500 text-center mb-3 hidden"></p>
+
+            <form id="auth-form" class="space-y-4">
+                <div>
+                    <label for="auth-email" class="block text-gray-700 font-semibold mb-1">ইমেইল:</label>
+                    <input type="email" id="auth-email" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+                <div>
+                    <label for="auth-password" class="block text-gray-700 font-semibold mb-1">পাসওয়ার্ড:</label>
+                    <input type="password" id="auth-password" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+                
+                <!-- অতিরিক্ত ফিল্ড শুধুমাত্র সাইনআপের জন্য -->
+                <div id="extra-signup-fields" class="space-y-4 hidden">
+                    <div>
+                        <label for="auth-board-id" class="block text-gray-700 font-semibold mb-1">বোর্ড আইডি (Board ID):</label>
+                        <input type="text" id="auth-board-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 123456" required>
+                    </div>
+                    <div>
+                        <label for="auth-birth-id" class="block text-gray-700 font-semibold mb-1">জন্ম নিবন্ধন নম্বর (Birth ID):</label>
+                        <input type="text" id="auth-birth-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 2005xxxxxxxxxxxxxxx" required>
+                    </div>
+                </div>
+
+                <!-- ক্যাপচা সেকশন শুধুমাত্র সাইনআপের জন্য -->
+                <div id="captcha-section" class="bg-gray-100 p-3 rounded-lg hidden">
+                    <label for="captcha-answer" class="block text-gray-700 font-semibold mb-1">
+                        নিশ্চিত করুন আপনি রোবট নন: <span id="captcha-question" class="font-bold text-indigo-700"></span>
+                    </label>
+                    <input type="number" id="captcha-answer" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+                <!-- অতিরিক্ত ফিল্ড শেষ -->
+
+                <div id="role-selection">
+                    <p class="text-gray-700 font-semibold mb-2">আপনার ভূমিকা নির্বাচন করুন:</p>
+                    <div class="flex space-x-4">
+                        <label class="inline-flex items-center">
+                            <input type="radio" name="userRole" value="student" checked class="form-radio text-indigo-600 h-5 w-5">
+                            <span class="ml-2 text-gray-700">শিক্ষার্থী</span>
+                        </label>
+                        <label class="inline-flex items-center">
+                            <input type="radio" name="userRole" value="teacher" class="form-radio text-indigo-600 h-5 w-5">
+                            <span class="ml-2 text-gray-700">শিক্ষক</span>
+                        </label>
+                    </div>
+                </div>
+
+                <button type="submit" id="auth-submit" class="w-full bg-indigo-600 text-white p-3 rounded-lg font-bold hover:bg-indigo-500 transition duration-300">
+                    সাইনআপ করুন
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- হিরো সেকশন -->
+    <section id="home" class="bg-indigo-600 text-white py-16 md:py-24 animate-hero">
+        <div class="container mx-auto px-4 text-center">
+            <p class="text-amber-300 text-xl font-semibold mb-3">সাফল্যের ১৪ বছরের পথচলা</p>
+            <h2 class="text-4xl md:text-6xl font-extrabold mb-4 leading-tight">
+                সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট
+            </h2>
+            <p class="text-xl md:text-2xl mb-8">
+                টেকনোলজি নির্ভর উজ্জ্বল ভবিষ্যতের পথে আপনার প্রথম পদক্ষেপ।
+            </p>
+            <a href="#courses" class="bg-amber-400 text-indigo-900 text-xl font-bold px-8 py-3 rounded-xl shadow-xl hover:bg-amber-300 transform hover:scale-105 transition duration-300 inline-block">
+                আসন্ন শিক্ষাবর্ষে ভর্তি চলছে! 
+            </a>
+            <p class="mt-4 text-lg">SSC (কারিগরি), HSC BMT, ডিপ্লোমা ইঞ্জিনিয়ারিং ও এগ্রিকালচারে ভর্তি চলছে।</p>
+        </div>
+    </section>
+
+    <!-- গ্যালারি সেকশন -->
+    <section id="gallery" class="py-16 bg-white">
+        <div class="container mx-auto px-4">
+            <h3 class="text-3xl font-bold text-gray-800 section-header mx-auto fade-in">আমাদের প্রতিষ্ঠানের কিছু চিত্র</h3>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+                <!-- প্লেসহোল্ডার ইমেজ ১ -->
+                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in">
+                    <img src="https://placehold.co/600x400/1e40af/ffffff?text=Classroom" alt="শ্রেণিকক্ষ" class="w-full h-32 md:h-48 object-cover">
+                    <p class="p-2 text-center text-sm font-semibold text-indigo-700">শ্রেণিকক্ষ</p>
+                </div>
+                <!-- প্লেসহোল্ডার ইমেজ ২ -->
+                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in" style="transition-delay: 0.1s;">
+                    <img src="https://placehold.co/600x400/d97706/ffffff?text=Computer+Lab" alt="কম্পিউটার ল্যাব" class="w-full h-32 md:h-48 object-cover">
+                    <p class="p-2 text-center text-sm font-semibold text-yellow-700">কম্পিউটার ল্যাব</p>
+                </div>
+                <!-- প্লেসহোল্ডার ইমেজ ৩ -->
+                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in" style="transition-delay: 0.2s;">
+                    <img src="https://placehold.co/600x400/059669/ffffff?text=Practical+Work" alt="ব্যবহারিক কাজ" class="w-full h-32 md:h-48 object-cover">
+                    <p class="p-2 text-center text-sm font-semibold text-green-700">ব্যবহারিক কাজ</p>
+                </div>
+                <!-- প্লেসহোল্ডার ইমেজ ৪ -->
+                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in" style="transition-delay: 0.3s;">
+                    <img src="https://placehold.co/600x400/dc2626/ffffff?text=Campus" alt="ক্যাম্পাস" class="w-full h-32 md:h-48 object-cover">
+                    <p class="p-2 text-center text-sm font-semibold text-red-700">ক্যাম্পাস ভিউ</p>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- ড্যাশবোর্ড কন্টেইনার (লগইন করার পর দেখানোর জন্য) -->
+    <section id="dashboard-view" class="py-16 bg-gray-100 hidden">
+        <div class="container mx-auto px-4 text-center">
+            <h3 class="text-3xl font-bold text-gray-800 section-header mx-auto">ব্যবহারকারী ড্যাশবোর্ড</h3>
+            <div id="dashboard-content" class="bg-white p-8 rounded-xl shadow-lg mt-8 text-left">
+                <!-- ড্যাশবোর্ড কনটেন্ট এখানে JavaScript দ্বারা লোড হবে -->
+            </div>
+        </div>
+    </section>
+
+
+    <!-- কোর্সের বিবরণ সেকশন -->
+    <section id="courses" class="py-16 bg-white">
+        <div class="container mx-auto px-4">
+            <h3 class="text-3xl font-bold text-gray-800 section-header mx-auto fade-in">আমাদের কোর্সসমূহ</h3>
+
+            <!-- কোর্স কার্ডগুলো (এখন ৪টি কার্ড: ২x২ বা ৪x১) -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mt-8">
+                
+                <!-- কোর্স 0: SSC (৯ম ও ১০ম) - কারিগরি শুধুমাত্র -->
+                <div class="bg-yellow-50 p-6 rounded-xl shadow-lg hover:shadow-2xl transition duration-300 border-t-4 border-yellow-600 card-hover fade-in">
+                    <h4 class="text-2xl font-bold text-yellow-700 mb-4">এস.এস.সি (কারিগরি শাখা)</h4>
+                    <ul class="space-y-2 text-gray-700 list-inside">
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">✔</span> ৯ম ও ১০ম শ্রেণিতে ভোকেশনাল কোর্স</li>
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">✔</span> হাতে-কলমে কারিগরি দক্ষতা উন্নয়ন</li>
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">✔</span> ডিপ্লোমা ভর্তির জন্য বিশেষ সুবিধা</li>
+                    </ul>
+                </div>
+                
+                <!-- কোর্স ১: HSC (বি.এম) -->
+                <div class="bg-green-50 p-6 rounded-xl shadow-lg hover:shadow-2xl transition duration-300 border-t-4 border-green-600 card-hover fade-in">
+                    <h4 class="text-2xl font-bold text-green-700 mb-4">এইচ.এস.সি (বি.এম)</h4>
+                    <ul class="space-y-2 text-gray-700 list-inside">
+                        <li class="flex items-center"><span class="text-green-600 mr-2">✔</span> কম্পিউটার টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-green-600 mr-2">✔</span> হিউম্যান রিসোর্স (HR) টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-green-600 mr-2">✔</span> উদ্যোগ টেকনোলজি</li>
+                    </ul>
+                </div>
+
+                <!-- কোর্স ২: ডিপ্লোমা ইন ইঞ্জিনিয়ারিং -->
+                <div class="bg-blue-50 p-6 rounded-xl shadow-lg hover:shadow-2xl transition duration-300 border-t-4 border-blue-600 card-hover fade-in">
+                    <h4 class="text-2xl font-bold text-blue-700 mb-4">ডিপ্লোমা ইন ইঞ্জিনিয়ারিং</h4>
+                    <ul class="space-y-2 text-gray-700 list-inside">
+                        <li class="flex items-center"><span class="text-blue-600 mr-2">✔</span> ইলেক্ট্রিক্যাল টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-blue-600 mr-2">✔</span> সিভিল টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-blue-600 mr-2">✔</span> কম্পিউটার টেকনোলজি</li>
+                    </ul>
+                </div>
+
+                <!-- কোর্স ৩: ডিপ্লোমা ইন এগ্রিকালচার -->
+                <div class="bg-red-50 p-6 rounded-xl shadow-lg hover:shadow-2xl transition duration-300 border-t-4 border-red-600 card-hover fade-in">
+                    <h4 class="text-2xl font-bold text-red-700 mb-4">ডিপ্লোমা ইন এগ্রিকালচার</h4>
+                    <ul class="space-y-2 text-gray-700 list-inside">
+                        <li class="flex items-center"><span class="text-red-600 mr-2">✔</span> কৃষি ও ফিশারিজ টেকনোলজি</li>
+                    </ul>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- বৈশিষ্ট্যের সেকশন -->
+    <section id="features" class="py-16 bg-gray-50">
+        <div class="container mx-auto px-4 text-center">
+            <h3 class="text-3xl font-bold text-gray-800 section-header mx-auto fade-in">আমাদের বিশেষ বৈশিষ্ট্যসমূহ</h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mt-8">
+                
+                <!-- বৈশিষ্ট্য ১ -->
+                <div class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition duration-300 card-hover fade-in">
+                    <div class="text-4xl text-amber-500 mb-3">🎓</div>
+                    <h4 class="text-xl font-semibold mb-2 text-gray-800">১০০% সাফল্যের নিশ্চয়তা</h4>
+                    <p class="text-gray-600">ভালো ফলাফলের জন্য সর্বোচ্চ সহযোগিতা সহ ১০০% পাশের নিশ্চয়তা।</p>
+                </div>
+
+                <!-- বৈশিষ্ট্য ২ -->
+                <div class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition duration-300 card-hover fade-in">
+                    <div class="text-4xl text-amber-500 mb-3">❌</div>
+                    <h4 class="text-xl font-semibold mb-2 text-gray-800">প্রাইভেটমুক্ত শিক্ষা</h4>
+                    <p class="text-gray-600">শিক্ষার্থীদেরকে আলাদা কোনো প্রাইভেট পড়ার প্রয়োজন হয় না—সময় ও অর্থ সাশ্রয়।</p>
+                </div>
+
+                <!-- বৈশিষ্ট্য ৩ -->
+                <div class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition duration-300 card-hover fade-in">
+                    <div class="text-4xl text-amber-500 mb-3">💻</div>
+                    <h4 class="text-xl font-semibold mb-2 text-gray-800">নিয়মিত ব্যবহারিক ক্লাস</h4>
+                    <p class="text-gray-600">আধুনিক ল্যাবে দক্ষ শিক্ষকের তত্ত্বাবধানে হাতে-কলমে (Practical) শিক্ষা।</p>
+                </div>
+
+                <!-- বৈশিষ্ট্য ৪ -->
+                <div class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition duration-300 card-hover fade-in">
+                    <div class="text-4xl text-amber-500 mb-3">🗓️</div>
+                    <h4 class="text-xl font-semibold mb-2 text-gray-800">চাকরিজীবীদের বিশেষ সুবিধা</h4>
+                    <p class="text-gray-600">কর্মজীবীদের জন্য ছুটির দিনে ক্লাস করার বিশেষ ব্যবস্থা রয়েছে।</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- যোগাযোগের সেকশন -->
+    <section id="contact" class="py-16 bg-indigo-700 text-white">
+        <div class="container mx-auto px-4 text-center">
+            <h3 class="text-3xl font-bold section-header mx-auto border-amber-400 fade-in">ভর্তির জন্য যোগাযোগ করুন</h3>
+            <p class="text-xl mb-6 mt-4 fade-in">আপনার আসন নিশ্চিত করতে দ্রুত যোগাযোগ করুন।</p>
+
+            <div class="bg-indigo-800 p-8 rounded-xl shadow-2xl max-w-lg mx-auto fade-in">
+                <p class="text-2xl font-bold mb-4">প্রতিষ্ঠান কার্যালয়:</p>
+                <p class="text-lg mb-4">
+                    প্রতিষ্ঠান টেইলারি/সি রেড, শ্রীপুর পৌরসভা। শ্রীপুর চৌরাস্তার উত্তর পাশে গোরাটি রোড, শ্রীপুর, গাজীপুর।
+                </p>
+
+                <p class="text-2xl font-bold mt-6 mb-2">যোগাযোগের মোবাইল নম্বর:</p>
+                <p class="text-4xl font-extrabold text-amber-400 mb-4">
+                    ০১৭১০ ০৭৭৩৩ ২
+                </p>
+                <p class="text-xl font-bold mb-4">
+                    ০১৯৪৮ ০৭৭৮৭৩
+                </p>
+
+                <!-- Facebook বাটন যোগ করা হলো -->
+                <a href="https://www.facebook.com/city.information.technology" target="_blank" 
+                   class="flex items-center justify-center bg-blue-600 text-white text-xl font-bold px-6 py-3 rounded-full shadow-xl hover:bg-blue-500 transition duration-300 block mt-6">
+                    <i class="fab fa-facebook-f mr-3"></i>
+                    আমাদের ফেসবুক পেজ
+                </a>
+
+                <!-- যোগাযোগের CTA -->
+                <a href="tel:+8801710077332" class="bg-amber-400 text-indigo-900 text-xl font-bold px-6 py-3 rounded-full shadow-xl hover:bg-amber-300 transition duration-300 block mt-4">
+                    এখনই কল করুন
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- ফুটার -->
+    <footer class="bg-gray-900 text-gray-400 p-6 text-center text-sm">
+        <div class="container mx-auto">
+            &copy; ২০২৫ সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট। সর্বস্বত্ব সংরক্ষিত।
+            <p class="mt-2">ঠিকানা কোড: 6F5C+44Q, মাওনা।</p>
+            <p class="mt-2">
+                <a href="https://www.facebook.com/city.information.technology" target="_blank" class="text-indigo-400 hover:text-indigo-300 transition duration-300">
+                    <i class="fab fa-facebook-f mr-1"></i> ফেসবুক
+                </a>
+            </p>
+        </div>
+    </footer>
+
+    <!-- স্ক্রিপ্ট -->
+    <script>
+        // DOM উপাদান নির্বাচন
+        const authModal = document.getElementById('auth-modal');
+        const loginBtn = document.getElementById('login-btn');
+        const signupBtn = document.getElementById('signup-btn');
+        const closeBtn = document.querySelector('.close-btn');
+        const authForm = document.getElementById('auth-form');
+        const authTitle = document.getElementById('auth-title');
+        const authSubmit = document.getElementById('auth-submit');
+        const authError = document.getElementById('auth-error');
+        const roleSelection = document.getElementById('role-selection');
+        const authButtons = document.getElementById('auth-buttons');
+        const userInfo = document.getElementById('user-info');
+        const signoutBtn = document.getElementById('signout-btn');
+        const dashboardView = document.getElementById('dashboard-view');
+        const dashboardContent = document.getElementById('dashboard-content');
+        const welcomeMessage = document.getElementById('welcome-message');
+        const extraSignupFields = document.getElementById('extra-signup-fields');
+        const captchaSection = document.getElementById('captcha-section');
+
+        // Captcha variable
+        window.captchaAnswer = 0;
+        let isLoginMode = true; // প্রাথমিক মোড লগইন
+        
+        // Gemini API Setup
+        const apiKey = ""; 
+        const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+        // Function for exponential backoff delay
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Function to call the Gemini API with backoff
+        async function callGeminiAPI(systemInstruction, userQuery) {
+            const maxRetries = 5;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const payload = {
+                        contents: [{ parts: [{ text: userQuery }] }],
+                        tools: [{ "google_search": {} }], // Use Google Search for grounding
+                        systemInstruction: {
+                            parts: [{ text: systemInstruction }]
+                        },
+                    };
+
+                    const response = await fetch(geminiApiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        const candidate = result.candidates?.[0];
+
+                        if (candidate && candidate.content?.parts?.[0]?.text) {
+                            return candidate.content.parts[0].text;
+                        }
+                        throw new Error("Invalid API response structure.");
+                    } else if (response.status === 429 && i < maxRetries - 1) {
+                        // Rate limit error, wait and retry
+                        const backoffTime = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                        console.warn(`Rate limit hit. Retrying in ${backoffTime / 1000}s...`);
+                        await delay(backoffTime);
+                    } else {
+                        throw new Error(`API call failed with status: ${response.status}`);
+                    }
+                } catch (error) {
+                    if (i === maxRetries - 1) {
+                        console.error("Gemini API call failed after multiple retries:", error);
+                        throw new Error("API call failed after multiple retries.");
+                    }
+                    // Continue loop for retry
+                }
+            }
+        }
+
+        // Function to set up the AI assistant button event listener
+        function setupAiAssistant() {
+            const askAiBtn = document.getElementById('ask-ai-btn');
+            if (!askAiBtn) return; // If button is not in DOM, exit
+
+            askAiBtn.onclick = async () => {
+                const queryText = document.getElementById('ai-query').value.trim();
+                const responseBox = document.getElementById('ai-response-box');
+                const responseText = document.getElementById('ai-response-text');
+                const errorBox = document.getElementById('ai-error-box');
+                const btnText = document.getElementById('ai-btn-text');
+                const loader = document.getElementById('ai-loader');
+
+                if (!queryText) {
+                    errorBox.textContent = "অনুগ্রহ করে আপনার প্রশ্নটি লিখুন।";
+                    errorBox.classList.remove('hidden');
+                    responseBox.classList.add('hidden');
+                    return;
+                }
+
+                // Setup loading state
+                responseBox.classList.add('hidden');
+                errorBox.classList.add('hidden');
+                btnText.textContent = 'লোড হচ্ছে...';
+                loader.classList.remove('hidden');
+                askAiBtn.disabled = true;
+
+                const role = askAiBtn.getAttribute('data-role');
+                const systemPrompt = askAiBtn.getAttribute('data-prompt');
+
+                // Enhance the prompt with context
+                const finalPrompt = `ব্যবহারকারীর ভূমিকা: ${role === 'teacher' ? 'শিক্ষক' : 'শিক্ষার্থী'}। প্রশ্ন: ${queryText}`;
+                
+                try {
+                    const aiResponse = await callGeminiAPI(systemPrompt, finalPrompt);
+                    responseText.innerHTML = aiResponse.replace(/\n/g, '<br>'); // Preserve line breaks
+                    responseBox.classList.remove('hidden');
+                } catch (error) {
+                    console.error("Gemini call failed:", error);
+                    errorBox.textContent = "দুঃখিত, এআই সহায়কের সাথে সংযোগ স্থাপন করা যায়নি। আবার চেষ্টা করুন।";
+                    errorBox.classList.remove('hidden');
+                } finally {
+                    btnText.textContent = 'জিজ্ঞাসা করুন ✨';
+                    loader.classList.add('hidden');
+                    askAiBtn.disabled = false;
+                }
+            };
+        }
+
+        // CAPTCHA generation function
+        function generateCaptcha() {
+            const num1 = Math.floor(Math.random() * 10) + 1; // 1 to 10
+            const num2 = Math.floor(Math.random() * 10) + 1; // 1 to 10
+            window.captchaAnswer = num1 + num2;
+            document.getElementById('captcha-question').textContent = `${num1} + ${num2} = ?`;
+            document.getElementById('captcha-answer').value = ''; // Clear previous input
+        }
+
+
+        // --- UI আপডেট ফাংশন ---
+        function updateModalUI() {
+            authError.classList.add('hidden');
+
+            if (isLoginMode) {
+                authTitle.textContent = 'ইউজার লগইন';
+                authSubmit.textContent = 'লগইন করুন';
+                roleSelection.classList.add('hidden');
+                // Hide extra sign-up fields for login mode
+                extraSignupFields.classList.add('hidden');
+                captchaSection.classList.add('hidden');
+            } else {
+                authTitle.textContent = 'নতুন ইউজার সাইনআপ';
+                authSubmit.textContent = 'সাইনআপ করুন';
+                roleSelection.classList.remove('hidden');
+                // Show extra sign-up fields for sign-up mode
+                extraSignupFields.classList.remove('hidden');
+                captchaSection.classList.remove('hidden');
+                generateCaptcha(); // Generate CAPTCHA
+            }
+        }
+
+        // লগইন স্ট্যাটাস অনুযায়ী নেভিগেশন বার এবং ড্যাশবোর্ড আপডেট করা
+        function updateUIForUser() {
+            if (!window.isAuthReady) return;
+
+            const user = window.auth.currentUser;
+            const role = window.currentUserRole;
+
+            if (user && user.email) {
+                // ইউজার লগইন করা আছে
+                authButtons.classList.add('hidden');
+                userInfo.classList.remove('hidden');
+                welcomeMessage.textContent = `স্বাগতম, (${role === 'teacher' ? 'শিক্ষক' : 'শিক্ষার্থী'})`;
+                
+                // ড্যাশবোর্ড কন্টেন্ট দেখান
+                dashboardView.classList.remove('hidden');
+                dashboardContent.innerHTML = generateDashboardContent(user.email, role, user.uid);
+                setupAiAssistant(); // AI অ্যাসিস্ট্যান্ট সেটআপ
+
+            } else {
+                // ইউজার লগইন করা নেই (বা শুধুমাত্র অ্যানোনিমাস)
+                authButtons.classList.remove('hidden');
+                userInfo.classList.add('hidden');
+                dashboardView.classList.add('hidden');
+            }
+        }
+
+        // রোল অনুযায়ী ড্যাশবোর্ড কন্টেন্ট তৈরি করা
+        function generateDashboardContent(email, role, userId) {
+            let content = `<p class="text-xl font-bold mb-4 text-indigo-700">অ্যাকাউন্টের তথ্য:</p>
+                           <p class="mb-2"><strong>ইউজার আইডি:</strong> ${userId}</p>
+                           <p class="mb-2"><strong>ইমেইল:</strong> ${email}</p>
+                           <p class="mb-4"><strong>ভূমিকা:</strong> ${role === 'teacher' ? 'শিক্ষক' : 'শিক্ষার্থী'}</p>`;
+            
+            const roleSpecificPrompt = role === 'teacher' 
+                ? "আপনি একজন অভিজ্ঞ শিক্ষক। সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট-এর পাঠ্যক্রম এবং প্রযুক্তির ওপর ভিত্তি করে উত্তর দিন। শিক্ষককে তার রুটিন বা পাঠদানের বিষয়বস্তু সম্পর্কে সহায়তা করুন।" 
+                : "আপনি একজন সহযোগী শিক্ষামূলক সহকারী। সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট-এর কোর্সে আগ্রহী একজন শিক্ষার্থীকে তার কোর্স নির্বাচন, চাকরির বাজার বা অধ্যয়নের কৌশল সম্পর্কে সহায়তা করুন। সংক্ষিপ্ত ও স্পষ্ট উত্তর দিন।";
+
+            if (role === 'teacher') {
+                content += `<div class="mt-6 bg-blue-50 p-4 rounded-lg">
+                                <p class="font-bold text-blue-700">শিক্ষক ড্যাশবোর্ড অ্যাক্সেস:</p>
+                                <p class="text-blue-600">আপনি ক্লাস রুটিন, শিক্ষার্থীদের গ্রেড এবং হাজিরা দেখতে পারবেন।</p>
+                            </div>`;
+            } else { // student
+                content += `<div class="mt-6 bg-green-50 p-4 rounded-lg">
+                                <p class="font-bold text-green-700">শিক্ষার্থী ড্যাশবোর্ড অ্যাক্সেস:</p>
+                                <p class="text-green-600">আপনি আপনার ফলাফল, ক্লাস শিডিউল এবং পরীক্ষার নোটিশ দেখতে পারবেন।</p>
+                            </div>`;
+            }
+
+            // Gemini AI Assistant Section
+            content += `
+                <div class="mt-8 pt-6 border-t border-gray-200">
+                    <h4 class="text-2xl font-bold text-indigo-700 mb-4 flex items-center">
+                        ✨ Gemini AI শিক্ষা সহায়ক
+                    </h4>
+                    <p class="text-gray-600 mb-4">${role === 'teacher' ? 'শিক্ষক হিসেবে আপনি পাঠ পরিকল্পনা বা উন্নত শিক্ষা কৌশল সম্পর্কে জিজ্ঞাসা করতে পারেন।' : 'শিক্ষার্থী হিসেবে আপনি কোর্স, ভর্তির প্রক্রিয়া বা পরীক্ষার প্রস্তুতি সম্পর্কে জানতে চাইতে পারেন।'}</p>
+                    
+                    <textarea id="ai-query" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 mb-3" rows="3" placeholder="আপনার প্রশ্নটি লিখুন... যেমন: 'ডিপ্লোমা ইঞ্জিনিয়ারিং-এ ভর্তির সুবিধা কী?'"></textarea>
+                    
+                    <button id="ask-ai-btn" data-role="${role}" data-prompt="${roleSpecificPrompt}" class="bg-amber-500 text-indigo-900 px-6 py-2 rounded-lg font-bold hover:bg-amber-400 transition duration-300 flex items-center justify-center">
+                        <span id="ai-btn-text">জিজ্ঞাসা করুন ✨</span>
+                        <div id="ai-loader" class="loader ml-3 hidden"></div>
+                    </button>
+
+                    <div id="ai-response-box" class="mt-6 p-4 bg-indigo-50 border border-indigo-200 rounded-lg hidden">
+                        <p class="font-bold text-indigo-700 mb-2">AI উত্তর:</p>
+                        <div id="ai-response-text" class="text-gray-800 whitespace-pre-wrap"></div>
+                    </div>
+                    
+                    <div id="ai-error-box" class="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg hidden">
+                        <p>দুঃখিত, বর্তমানে সহায়ক উপলব্ধ নয়। অনুগ্রহ করে আবার চেষ্টা করুন।</p>
+                    </div>
+                </div>
+            `;
+            return content;
+        }
+
+        // --- ইভেন্ট হ্যান্ডলার্স (Authentication) ---
+
+        loginBtn.onclick = () => {
+            isLoginMode = true;
+            updateModalUI();
+            authModal.style.display = 'block';
+        };
+
+        signupBtn.onclick = () => {
+            isLoginMode = false;
+            updateModalUI();
+            authModal.style.display = 'block';
+        };
+
+        closeBtn.onclick = () => {
+            authModal.style.display = 'none';
+        };
+
+        window.onclick = (event) => {
+            if (event.target == authModal) {
+                authModal.style.display = 'none';
+            }
+        };
+
+        signoutBtn.onclick = async () => {
+            try {
+                await signOut(window.auth);
+                window.currentUserRole = 'guest'; // সাইন আউট হলে রোল রিসেট
+                console.log("User signed out.");
+                updateUIForUser();
+            } catch (error) {
+                console.error("Sign out error:", error.message);
+            }
+        };
+
+        // ফর্ম সাবমিট লজিক (লগইন/সাইনআপ)
+        authForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            const role = document.querySelector('input[name="userRole"]:checked')?.value || 'student';
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+            authError.classList.add('hidden');
+            
+            try {
+                if (isLoginMode) {
+                    // লগইন
+                    await signInWithEmailAndPassword(window.auth, email, password);
+                } else {
+                    // সাইনআপ
+                    const boardId = document.getElementById('auth-board-id').value.trim();
+                    const birthId = document.getElementById('auth-birth-id').value.trim();
+                    const captchaInput = parseInt(document.getElementById('captcha-answer').value.trim());
+
+                    // Validation for new fields and CAPTCHA
+                    if (!boardId || !birthId) {
+                        authError.textContent = 'সাইনআপের জন্য বোর্ড আইডি ও জন্ম নিবন্ধন নম্বর আবশ্যক।';
+                        authError.classList.remove('hidden');
+                        return; // Stop submission
+                    }
+                    
+                    if (captchaInput !== window.captchaAnswer) {
+                        authError.textContent = 'রোবট যাচাইকরণ ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।';
+                        authError.classList.remove('hidden');
+                        generateCaptcha(); // Regenerate CAPTCHA on failure
+                        return; // Stop submission
+                    }
+
+                    const userCredential = await createUserWithEmailAndPassword(window.auth, email, password);
+                    const user = userCredential.user;
+                    
+                    // Firestore-এ ইউজার রোল ও নতুন তথ্য সংরক্ষণ করা
+                    const userRef = doc(window.db, `artifacts/${appId}/users/${user.uid}/user_data/profile`);
+                    await setDoc(userRef, {
+                        email: email,
+                        role: role, // 'student' বা 'teacher'
+                        boardId: boardId, 
+                        birthId: birthId,
+                        createdAt: new Date().toISOString()
+                    });
+                }
+                
+                authModal.style.display = 'none';
+                // onAuthStateChanged স্বয়ংক্রিয়ভাবে UI আপডেট করবে
+            } catch (error) {
+                console.error("Authentication failed:", error.code, error.message);
+                authError.textContent = 'লগইন/সাইনআপ ব্যর্থ: ' + (error.code === 'auth/email-already-in-use' ? 'ইমেইলটি ইতিমধ্যেই ব্যবহৃত হয়েছে।' : 'ইমেইল বা পাসওয়ার্ড ভুল।');
+                authError.classList.remove('hidden');
+            }
+        };
+
+        // স্ক্রোল অ্যানিমেশন লজিক (আগের মতোই রাখা হয়েছে)
+        document.addEventListener('DOMContentLoaded', () => {
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('appear');
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, {
+                threshold: 0.1
+            });
+            document.querySelectorAll('.fade-in').forEach(element => {
+                observer.observe(element);
+            });
+            document.querySelectorAll('.fade-in').forEach((element, index) => {
+                element.style.transitionDelay = `${index * 0.1}s`;
+            });
+        });
+    </script>
+
+</body>
+</html>
