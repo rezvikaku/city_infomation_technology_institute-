@@ -222,27 +222,6 @@
                     <input type="password" id="auth-password" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
                 </div>
                 
-                <!-- অতিরিক্ত ফিল্ড শুধুমাত্র সাইনআপের জন্য -->
-                <div id="extra-signup-fields" class="space-y-4 hidden">
-                    <div>
-                        <label for="auth-board-id" class="block text-gray-700 font-semibold mb-1">বোর্ড আইডি (Board ID):</label>
-                        <input type="text" id="auth-board-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 123456" required>
-                    </div>
-                    <div>
-                        <label for="auth-birth-id" class="block text-gray-700 font-semibold mb-1">জন্ম নিবন্ধন নম্বর (Birth ID):</label>
-                        <input type="text" id="auth-birth-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 2005xxxxxxxxxxxxxxx" required>
-                    </div>
-                </div>
-
-                <!-- ক্যাপচা সেকশন শুধুমাত্র সাইনআপের জন্য -->
-                <div id="captcha-section" class="bg-gray-100 p-3 rounded-lg hidden">
-                    <label for="captcha-answer" class="block text-gray-700 font-semibold mb-1">
-                        নিশ্চিত করুন আপনি রোবট নন: <span id="captcha-question" class="font-bold text-indigo-700"></span>
-                    </label>
-                    <input type="number" id="captcha-answer" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
-                </div>
-                <!-- অতিরিক্ত ফিল্ড শেষ -->
-
                 <div id="role-selection">
                     <p class="text-gray-700 font-semibold mb-2">আপনার ভূমিকা নির্বাচন করুন:</p>
                     <div class="flex space-x-4">
@@ -256,6 +235,31 @@
                         </label>
                     </div>
                 </div>
+
+                <!-- অতিরিক্ত ফিল্ড শুধুমাত্র শিক্ষার্থীর জন্য -->
+                <div id="extra-signup-fields" class="space-y-4 hidden">
+                    <p class="text-sm font-bold text-indigo-600">শিক্ষার্থীদের জন্য আবশ্যকীয় তথ্য:</p>
+                    <div>
+                        <label for="auth-board-id" class="block text-gray-700 font-semibold mb-1">বোর্ড আইডি (Board ID):</label>
+                        <!-- 'required' attribute removed from HTML, managed by JS -->
+                        <input type="text" id="auth-board-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 123456">
+                    </div>
+                    <div>
+                        <label for="auth-birth-id" class="block text-gray-700 font-semibold mb-1">জন্ম নিবন্ধন নম্বর (Birth ID):</label>
+                        <!-- 'required' attribute removed from HTML, managed by JS -->
+                        <input type="text" id="auth-birth-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 2005xxxxxxxxxxxxxxx">
+                    </div>
+                </div>
+
+                <!-- ক্যাপচা সেকশন শুধুমাত্র শিক্ষার্থীর জন্য -->
+                <div id="captcha-section" class="bg-gray-100 p-3 rounded-lg hidden">
+                    <label for="captcha-answer" class="block text-gray-700 font-semibold mb-1">
+                        নিশ্চিত করুন আপনি রোবট নন: <span id="captcha-question" class="font-bold text-indigo-700"></span>
+                    </label>
+                    <!-- 'required' attribute removed from HTML, managed by JS -->
+                    <input type="number" id="captcha-answer" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" >
+                </div>
+                <!-- অতিরিক্ত ফিল্ড শেষ -->
 
                 <button type="submit" id="auth-submit" class="w-full bg-indigo-600 text-white p-3 rounded-lg font-bold hover:bg-indigo-500 transition duration-300">
                     সাইনআপ করুন
@@ -478,6 +482,7 @@
         const welcomeMessage = document.getElementById('welcome-message');
         const extraSignupFields = document.getElementById('extra-signup-fields');
         const captchaSection = document.getElementById('captcha-section');
+        const roleRadios = document.querySelectorAll('input[name="userRole"]');
 
         // Captcha variable
         window.captchaAnswer = 0;
@@ -595,6 +600,37 @@
             document.getElementById('captcha-answer').value = ''; // Clear previous input
         }
 
+        // নতুন ফাংশন: ভূমিকা (Role) অনুযায়ী সাইনআপ ফিল্ড দেখানো/লুকানো
+        function toggleSignupFieldsByRole() {
+            if (isLoginMode) return; // শুধুমাত্র সাইনআপ মোডে কাজ করবে
+
+            const selectedRole = document.querySelector('input[name="userRole"]:checked')?.value;
+            const boardIdInput = document.getElementById('auth-board-id');
+            const birthIdInput = document.getElementById('auth-birth-id');
+            const captchaInput = document.getElementById('captcha-answer');
+
+            if (selectedRole === 'student') {
+                // শিক্ষার্থীর জন্য আবশ্যকীয়
+                extraSignupFields.classList.remove('hidden');
+                captchaSection.classList.remove('hidden');
+
+                // HTML5 required অ্যাট্রিবিউট যোগ করা হলো
+                boardIdInput.setAttribute('required', 'required');
+                birthIdInput.setAttribute('required', 'required');
+                captchaInput.setAttribute('required', 'required');
+                generateCaptcha(); // ক্যাপচা জেনারেট করা হলো
+            } else {
+                // শিক্ষকের জন্য ঐচ্ছিক (লুকানো)
+                extraSignupFields.classList.add('hidden');
+                captchaSection.classList.add('hidden');
+
+                // HTML5 required অ্যাট্রিবিউট সরানো হলো
+                boardIdInput.removeAttribute('required');
+                birthIdInput.removeAttribute('required');
+                captchaInput.removeAttribute('required');
+            }
+        }
+
 
         // --- UI আপডেট ফাংশন ---
         function updateModalUI() {
@@ -604,17 +640,15 @@
                 authTitle.textContent = 'ইউজার লগইন';
                 authSubmit.textContent = 'লগইন করুন';
                 roleSelection.classList.add('hidden');
-                // Hide extra sign-up fields for login mode
+                // লগইন মোডে সাইনআপ ফিল্ড লুকানো
                 extraSignupFields.classList.add('hidden');
                 captchaSection.classList.add('hidden');
             } else {
                 authTitle.textContent = 'নতুন ইউজার সাইনআপ';
                 authSubmit.textContent = 'সাইনআপ করুন';
                 roleSelection.classList.remove('hidden');
-                // Show extra sign-up fields for sign-up mode
-                extraSignupFields.classList.remove('hidden');
-                captchaSection.classList.remove('hidden');
-                generateCaptcha(); // Generate CAPTCHA
+                // সাইনআপ মোডে ভূমিকা অনুযায়ী ফিল্ড দেখানো
+                toggleSignupFieldsByRole(); 
             }
         }
 
@@ -730,6 +764,11 @@
             }
         };
 
+        // ভূমিকা (Role) পরিবর্তনের ইভেন্ট লিসেনার
+        roleRadios.forEach(radio => {
+            radio.addEventListener('change', toggleSignupFieldsByRole);
+        });
+
         // ফর্ম সাবমিট লজিক (লগইন/সাইনআপ)
         authForm.onsubmit = async (e) => {
             e.preventDefault();
@@ -748,34 +787,50 @@
                     // সাইনআপ
                     const boardId = document.getElementById('auth-board-id').value.trim();
                     const birthId = document.getElementById('auth-birth-id').value.trim();
-                    const captchaInput = parseInt(document.getElementById('captcha-answer').value.trim());
-
-                    // Validation for new fields and CAPTCHA
-                    if (!boardId || !birthId) {
-                        authError.textContent = 'সাইনআপের জন্য বোর্ড আইডি ও জন্ম নিবন্ধন নম্বর আবশ্যক।';
-                        authError.classList.remove('hidden');
-                        return; // Stop submission
-                    }
+                    const captchaInput = document.getElementById('captcha-answer').value.trim();
                     
-                    if (captchaInput !== window.captchaAnswer) {
-                        authError.textContent = 'রোবট যাচাইকরণ ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।';
-                        authError.classList.remove('hidden');
-                        generateCaptcha(); // Regenerate CAPTCHA on failure
-                        return; // Stop submission
+                    let isStudentValidationPassed = true;
+
+                    // শিক্ষার্থীর জন্য অতিরিক্ত ভ্যালিডেশন
+                    if (role === 'student') {
+                        // বোর্ড আইডি এবং জন্ম নিবন্ধন আবশ্যক
+                        if (!boardId || !birthId) {
+                            authError.textContent = 'শিক্ষার্থী সাইনআপের জন্য বোর্ড আইডি ও জন্ম নিবন্ধন নম্বর আবশ্যক।';
+                            authError.classList.remove('hidden');
+                            isStudentValidationPassed = false;
+                        } else if (parseInt(captchaInput) !== window.captchaAnswer) {
+                            // ক্যাপচা ভ্যালিডেশন
+                            authError.textContent = 'রোবট যাচাইকরণ ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।';
+                            authError.classList.remove('hidden');
+                            generateCaptcha(); // ব্যর্থ হলে ক্যাপচা পরিবর্তন
+                            isStudentValidationPassed = false;
+                        }
                     }
 
+                    if (!isStudentValidationPassed && role === 'student') {
+                        return; // যদি শিক্ষার্থী ভ্যালিডেশন ব্যর্থ হয়
+                    }
+
+                    // Firebase-এ ইউজার তৈরি করা
                     const userCredential = await createUserWithEmailAndPassword(window.auth, email, password);
                     const user = userCredential.user;
                     
-                    // Firestore-এ ইউজার রোল ও নতুন তথ্য সংরক্ষণ করা
+                    // Firestore-এ ইউজার রোল ও তথ্য সংরক্ষণ করা
                     const userRef = doc(window.db, `artifacts/${appId}/users/${user.uid}/user_data/profile`);
-                    await setDoc(userRef, {
+                    
+                    const profileData = {
                         email: email,
                         role: role, // 'student' বা 'teacher'
-                        boardId: boardId, 
-                        birthId: birthId,
                         createdAt: new Date().toISOString()
-                    });
+                    };
+                    
+                    // শিক্ষার্থীর তথ্য শুধুমাত্র student রোলের জন্য সংরক্ষণ করা
+                    if (role === 'student') {
+                         profileData.boardId = boardId;
+                         profileData.birthId = birthId;
+                    }
+
+                    await setDoc(userRef, profileData);
                 }
                 
                 authModal.style.display = 'none';
@@ -805,6 +860,9 @@
             document.querySelectorAll('.fade-in').forEach((element, index) => {
                 element.style.transitionDelay = `${index * 0.1}s`;
             });
+
+            // DOM লোড হওয়ার পর ডিফল্ট রোল অনুযায়ী সাইনআপ ফিল্ড একবার টগল করা
+            toggleSignupFieldsByRole();
         });
     </script>
 
