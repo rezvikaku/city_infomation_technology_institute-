@@ -8,7 +8,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, orderBy, limit, onSnapshot, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // Firestore লগিং ডিবাগ মোডে সেট করা হলো
@@ -17,10 +17,15 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
 
+        // গ্লোবাল ভেরিয়েবল সেট করা
+        window.db = null;
+        window.auth = null;
+
         if (Object.keys(firebaseConfig).length > 0) {
             const app = initializeApp(firebaseConfig);
             window.db = getFirestore(app);
             window.auth = getAuth(app);
+            window.appId = appId; // অ্যাপ আইডি গ্লোবাল করা হলো
         } else {
             console.error("Firebase Configuration is missing.");
         }
@@ -29,29 +34,38 @@
         window.isAuthReady = false;
         window.currentUserId = null;
         window.currentUserRole = 'guest';
+        window.currentUserName = 'Guest';
 
         if (window.auth) {
             onAuthStateChanged(window.auth, async (user) => {
                 if (user) {
                     window.currentUserId = user.uid;
-                    // ইউজার রোল Firestore থেকে লোড করা
-                    const userRef = doc(window.db, `artifacts/${appId}/users/${user.uid}/user_data/profile`);
+                    // ইউজার রোল এবং নাম Firestore থেকে লোড করা
+                    const userRef = doc(window.db, `artifacts/${window.appId}/users/${user.uid}/user_data/profile`);
                     const docSnap = await getDoc(userRef);
                     
-                    if (docSnap.exists()) {
-                        window.currentUserRole = docSnap.data().role || 'student';
+                    if (docSnap.exists() && !user.isAnonymous) {
+                        const data = docSnap.data();
+                        window.currentUserRole = data.role || 'student';
+                        window.currentUserName = data.name || user.email.split('@')[0];
+                        
+                    } else if (user.isAnonymous) {
+                        window.currentUserRole = 'guest';
+                        window.currentUserName = 'Guest';
                     } else {
                         // যদি প্রোফাইল ডেটা না থাকে, ডিফল্ট রোল 'student'
-                        window.currentUserRole = 'student'; 
+                        window.currentUserRole = 'student';
+                        window.currentUserName = user.email ? user.email.split('@')[0] : 'User';
                     }
-                    console.log("Logged in user:", user.uid, "Role:", window.currentUserRole);
+                    console.log("Logged in user:", user.uid, "Role:", window.currentUserRole, "Name:", window.currentUserName);
                 } else {
                     window.currentUserId = crypto.randomUUID(); // আনঅথেন্টিকেটেড ইউজার
                     window.currentUserRole = 'guest';
+                    window.currentUserName = 'Guest';
                     console.log("User is signed out or anonymous.");
                 }
                 window.isAuthReady = true;
-                updateUIForUser();
+                updateUIForUser(); // UI আপডেট করা হলো
             });
 
             // কাস্টম টোকেন বা অ্যানোনিমাস সাইন-ইন
@@ -159,6 +173,48 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        /* গ্যালারি ক্যাপশনের উচ্চতা স্থির রাখা */
+        .gallery-card {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 280px; /* কার্ডের ন্যূনতম উচ্চতা স্থির রাখা হলো */
+        }
+        .gallery-description {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        /* এআই চ্যাট বক্স স্টাইল */
+        .chat-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background-color: #f8fafc;
+            padding: 10px;
+        }
+        .chat-message {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+        .user-message {
+            background-color: #3b82f6; /* Blue-500 */
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        .ai-message {
+            background-color: #ecfdf5; /* Emerald-50 */
+            color: #065f46; /* Emerald-700 */
+            margin-right: auto;
+            text-align: left;
+            border: 1px solid #a7f3d0;
+        }
     </style>
 </head>
 <body>
@@ -185,7 +241,7 @@
                 <a href="#contact" class="hidden md:block hover:text-amber-300 transition duration-300">যোগাযোগ</a>
                 
                 <!-- ইউজার অ্যাকশন বাটন -->
-                <div id="auth-buttons">
+                <div id="auth-buttons" class="flex items-center">
                     <button id="signup-btn" class="bg-green-500 text-white px-3 py-1 rounded-full font-bold hover:bg-green-400 transition duration-300 text-sm md:text-base">
                         সাইনআপ
                     </button>
@@ -214,6 +270,10 @@
 
             <form id="auth-form" class="space-y-4">
                 <div>
+                    <label for="auth-name" class="block text-gray-700 font-semibold mb-1">নাম:</label>
+                    <input type="text" id="auth-name" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="আপনার পুরো নাম" required>
+                </div>
+                <div>
                     <label for="auth-email" class="block text-gray-700 font-semibold mb-1">ইমেইল:</label>
                     <input type="email" id="auth-email" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
                 </div>
@@ -237,32 +297,30 @@
                 </div>
 
                 <!-- অতিরিক্ত ফিল্ড শুধুমাত্র শিক্ষার্থীর জন্য -->
-                <div id="extra-signup-fields" class="space-y-4 hidden">
-                    <p class="text-sm font-bold text-indigo-600">শিক্ষার্থীদের জন্য আবশ্যকীয় তথ্য:</p>
+                <div id="extra-signup-fields" class="space-y-4">
+                    <p class="text-sm font-bold text-indigo-600">শিক্ষার্থীদের জন্য আবশ্যকীয় তথ্য:</p>
                     <div>
                         <label for="auth-board-id" class="block text-gray-700 font-semibold mb-1">বোর্ড আইডি (Board ID):</label>
-                        <!-- 'required' attribute removed from HTML, managed by JS -->
                         <input type="text" id="auth-board-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 123456">
                     </div>
                     <div>
                         <label for="auth-birth-id" class="block text-gray-700 font-semibold mb-1">জন্ম নিবন্ধন নম্বর (Birth ID):</label>
-                        <!-- 'required' attribute removed from HTML, managed by JS -->
                         <input type="text" id="auth-birth-id" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যেমন: 2005xxxxxxxxxxxxxxx">
                     </div>
                 </div>
 
                 <!-- ক্যাপচা সেকশন শুধুমাত্র শিক্ষার্থীর জন্য -->
-                <div id="captcha-section" class="bg-gray-100 p-3 rounded-lg hidden">
+                <div id="captcha-section" class="bg-gray-100 p-3 rounded-lg">
                     <label for="captcha-answer" class="block text-gray-700 font-semibold mb-1">
-                        নিশ্চিত করুন আপনি রোবট নন: <span id="captcha-question" class="font-bold text-indigo-700"></span>
+                        নিশ্চিত করুন আপনি রোবট নন: <span id="captcha-question" class="font-bold text-indigo-700 text-xl"></span>
                     </label>
-                    <!-- 'required' attribute removed from HTML, managed by JS -->
-                    <input type="number" id="captcha-answer" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" >
+                    <input type="number" id="captcha-answer" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="যোগফল লিখুন">
                 </div>
                 <!-- অতিরিক্ত ফিল্ড শেষ -->
 
-                <button type="submit" id="auth-submit" class="w-full bg-indigo-600 text-white p-3 rounded-lg font-bold hover:bg-indigo-500 transition duration-300">
-                    সাইনআপ করুন
+                <button type="submit" id="auth-submit" class="w-full bg-indigo-600 text-white p-3 rounded-lg font-bold hover:bg-indigo-500 transition duration-300 flex items-center justify-center">
+                    <span id="auth-spinner" class="hidden loader mr-2"></span>
+                    <span id="auth-submit-text">সাইনআপ করুন</span>
                 </button>
             </form>
         </div>
@@ -273,43 +331,66 @@
         <div class="container mx-auto px-4 text-center">
             <p class="text-amber-300 text-xl font-semibold mb-3">সাফল্যের ১৪ বছরের পথচলা</p>
             <h2 class="text-4xl md:text-6xl font-extrabold mb-4 leading-tight">
-                সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট
-            </h2>
+                সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট             </h2>
             <p class="text-xl md:text-2xl mb-8">
                 টেকনোলজি নির্ভর উজ্জ্বল ভবিষ্যতের পথে আপনার প্রথম পদক্ষেপ।
             </p>
             <a href="#courses" class="bg-amber-400 text-indigo-900 text-xl font-bold px-8 py-3 rounded-xl shadow-xl hover:bg-amber-300 transform hover:scale-105 transition duration-300 inline-block">
                 আসন্ন শিক্ষাবর্ষে ভর্তি চলছে! 
             </a>
-            <p class="mt-4 text-lg">SSC (কারিগরি), HSC BMT, ডিপ্লোমা ইঞ্জিনিয়ারিং ও এগ্রিকালচারে ভর্তি চলছে।</p>
+            <p class="mt-4 text-lg">SSC (কারিগরি), HSC BMT, ডিপ্লোমা ইঞ্জিনিয়ারিং ও এগ্রিকালচারে ভর্তি চলছে।</p>
         </div>
     </section>
 
-    <!-- গ্যালারি সেকশন -->
+    <!-- গ্যালারি সেকশন (ছবিবিহীন - ইমোজি/আইকন নির্ভর) -->
     <section id="gallery" class="py-16 bg-white">
         <div class="container mx-auto px-4">
-            <h3 class="text-3xl font-bold text-gray-800 section-header mx-auto fade-in">আমাদের প্রতিষ্ঠানের কিছু চিত্র</h3>
+            <h3 class="text-3xl font-bold text-gray-800 section-header mx-auto fade-in">আমাদের প্রতিষ্ঠানের কিছু চিত্র (সুবিধাসমূহ)</h3>
 
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-                <!-- প্লেসহোল্ডার ইমেজ ১ -->
-                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in">
-                    <img src="https://placehold.co/600x400/1e40af/ffffff?text=Classroom" alt="শ্রেণিকক্ষ" class="w-full h-32 md:h-48 object-cover">
-                    <p class="p-2 text-center text-sm font-semibold text-indigo-700">শ্রেণিকক্ষ</p>
+                
+                <!-- কার্ড ১: শ্রেণিকক্ষ ও অন্যান্য কক্ষ -->
+                <div class="rounded-xl shadow-lg hover:shadow-2xl card-hover fade-in gallery-card border border-indigo-200 bg-indigo-50">
+                    <div class="h-32 md:h-40 flex flex-col items-center justify-center bg-indigo-100/70 p-4 rounded-t-xl">
+                        <span class="text-5xl md:text-6xl text-indigo-700">📚</span>
+                        <h4 class="text-xl font-bold text-indigo-800 mt-2">শ্রেণিকক্ষ ও রূমসমূহ</h4>
+                    </div>
+                    <div class="p-3 text-center text-base font-medium text-indigo-700 gallery-description">
+                            <p>৮টি সুসজ্জিত শ্রেণিকক্ষ, প্রধান শিক্ষকের কক্ষ, শিক্ষক লাউঞ্জ এবং পরিচ্ছন্ন ওয়াশরুমের ব্যবস্থা।</p>
+                    </div>
                 </div>
-                <!-- প্লেসহোল্ডার ইমেজ ২ -->
-                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in" style="transition-delay: 0.1s;">
-                    <img src="https://placehold.co/600x400/d97706/ffffff?text=Computer+Lab" alt="কম্পিউটার ল্যাব" class="w-full h-32 md:h-48 object-cover">
-                    <p class="p-2 text-center text-sm font-semibold text-yellow-700">কম্পিউটার ল্যাব</p>
+
+                <!-- কার্ড ২: কম্পিউটার ল্যাব -->
+                <div class="rounded-xl shadow-lg hover:shadow-2xl card-hover fade-in gallery-card border border-yellow-200 bg-yellow-50" style="transition-delay: 0.1s;">
+                    <div class="h-32 md:h-40 flex flex-col items-center justify-center bg-yellow-100/70 p-4 rounded-t-xl">
+                        <span class="text-5xl md:text-6xl text-yellow-700">💻</span>
+                        <h4 class="text-xl font-bold text-yellow-800 mt-2">আধুনিক ল্যাব</h4>
+                    </div>
+                    <div class="p-3 text-center text-base font-medium text-yellow-700 gallery-description">
+                        <p>আধুনিক কম্পিউটার ল্যাব, হাই-স্পিড ইন্টারনেট সুবিধা এবং প্রতিটি শিক্ষার্থীর জন্য ব্যক্তিগত কম্পিউটার।</p>
+                    </div>
                 </div>
-                <!-- প্লেসহোল্ডার ইমেজ ৩ -->
-                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in" style="transition-delay: 0.2s;">
-                    <img src="https://placehold.co/600x400/059669/ffffff?text=Practical+Work" alt="ব্যবহারিক কাজ" class="w-full h-32 md:h-48 object-cover">
-                    <p class="p-2 text-center text-sm font-semibold text-green-700">ব্যবহারিক কাজ</p>
+
+                <!-- কার্ড ৩: ব্যবহারিক কাজ ও গবেষণাগার -->
+                <div class="rounded-xl shadow-lg hover:shadow-2xl card-hover fade-in gallery-card border border-green-200 bg-green-50" style="transition-delay: 0.2s;">
+                    <div class="h-32 md:h-40 flex flex-col items-center justify-center bg-green-100/70 p-4 rounded-t-xl">
+                        <span class="text-5xl md:text-6xl text-green-700">🧪</span>
+                        <h4 class="text-xl font-bold text-green-800 mt-2">ব্যবহারিক শিক্ষা</h4>
+                    </div>
+                    <div class="p-3 text-center text-base font-medium text-green-700 gallery-description">
+                        <p>ব্যবহারিক ক্লাস ও প্রজেক্টের জন্য উন্নতমানের যন্ত্রপাতি ও বিজ্ঞান গবেষণাগার।</p>
+                    </div>
                 </div>
-                <!-- প্লেসহোল্ডার ইমেজ ৪ -->
-                <div class="rounded-lg overflow-hidden shadow-lg card-hover fade-in" style="transition-delay: 0.3s;">
-                    <img src="https://placehold.co/600x400/dc2626/ffffff?text=Campus" alt="ক্যাম্পাস" class="w-full h-32 md:h-48 object-cover">
-                    <p class="p-2 text-center text-sm font-semibold text-red-700">ক্যাম্পাস ভিউ</p>
+
+                <!-- কার্ড ৪: ক্যাম্পাস ভিউ -->
+                <div class="rounded-xl shadow-lg hover:shadow-2xl card-hover fade-in gallery-card border border-red-200 bg-red-50" style="transition-delay: 0.3s;">
+                    <div class="h-32 md:h-40 flex flex-col items-center justify-center bg-red-100/70 p-4 rounded-t-xl">
+                        <span class="text-5xl md:text-6xl text-red-700">🏞️</span>
+                        <h4 class="text-xl font-bold text-red-800 mt-2">ক্যাম্পাস পরিবেশ</h4>
+                    </div>
+                    <div class="p-3 text-center text-base font-medium text-red-700 gallery-description">
+                        <p>মনোরম ও নিরাপদ ক্যাম্পাস, খেলাধুলার সুবিধা এবং শিক্ষার্থীদের জন্য পর্যাপ্ত বসার স্থান।</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -319,7 +400,7 @@
     <section id="dashboard-view" class="py-16 bg-gray-100 hidden">
         <div class="container mx-auto px-4 text-center">
             <h3 class="text-3xl font-bold text-gray-800 section-header mx-auto">ব্যবহারকারী ড্যাশবোর্ড</h3>
-            <div id="dashboard-content" class="bg-white p-8 rounded-xl shadow-lg mt-8 text-left">
+            <div id="dashboard-content" class="bg-white p-4 md:p-8 rounded-xl shadow-lg mt-8 text-left max-w-4xl mx-auto">
                 <!-- ড্যাশবোর্ড কনটেন্ট এখানে JavaScript দ্বারা লোড হবে -->
             </div>
         </div>
@@ -334,33 +415,58 @@
             <!-- কোর্স কার্ডগুলো (এখন ৪টি কার্ড: ২x২ বা ৪x১) -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mt-8">
                 
-                <!-- কোর্স 0: SSC (৯ম ও ১০ম) - কারিগরি শুধুমাত্র -->
+                <!-- কোর্স 0: SSC (৯ম ও ১০ম) - কারিগরি -->
                 <div class="bg-yellow-50 p-6 rounded-xl shadow-lg hover:shadow-2xl transition duration-300 border-t-4 border-yellow-600 card-hover fade-in">
-                    <h4 class="text-2xl font-bold text-yellow-700 mb-4">এস.এস.সি (কারিগরি শাখা)</h4>
-                    <ul class="space-y-2 text-gray-700 list-inside">
-                        <li class="flex items-center"><span class="text-yellow-600 mr-2">✔</span> ৯ম ও ১০ম শ্রেণিতে ভোকেশনাল কোর্স</li>
-                        <li class="flex items-center"><span class="text-yellow-600 mr-2">✔</span> হাতে-কলমে কারিগরি দক্ষতা উন্নয়ন</li>
-                        <li class="flex items-center"><span class="text-yellow-600 mr-2">✔</span> ডিপ্লোমা ভর্তির জন্য বিশেষ সুবিধা</li>
+                    <h4 class="text-2xl font-bold text-yellow-700 mb-4">এস.এস.সি (কারিগরি শাখা) - ৯ম ও ১০ম শ্রেণি</h4>
+                    
+                    <p class="text-base font-semibold text-yellow-800 mb-2 border-b border-yellow-300 pb-1">আবশ্যিক টেকনোলজি:</p>
+                    <ul class="space-y-1 text-gray-700 list-inside text-sm">
+                        <!-- 51918 & 51928 - Computer Application 1st & 2nd -->
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">💻</span> কম্পিউটার অ্যাপ্লিকেশন (কোড: ৫১৯১৮/৫১৯২৮)</li>
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">✔</span> অন্যান্য আবশ্যিক বিষয়</li>
                     </ul>
+
+                    <p class="text-base font-semibold text-yellow-800 mt-3 mb-2 border-b border-yellow-300 pb-1">ট্রেডসমূহ (প্রথম ও দ্বিতীয় পত্র):</p>
+                    <ul class="space-y-1 text-gray-700 list-inside text-sm">
+                        <!-- 56211, 56221 -->
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">⚡</span> জেনারেল ইলেক্ট্রনিক্স (৫৬২১১/৫৬২২১)</li>
+                        <!-- 58111, 58121 -->
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">🧵</span> অ্যাপারেল ম্যানুফ্যাকচারিং বেসিকস (৫৮১১১/৫৮১২১)</li>
+                        <!-- 58011, 58021 -->
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">🐔</span> পোল্ট্রি রিয়ারিং অ্যান্ড ফার্মিং (৫৮০১১/৫৮০২১)</li>
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">🌱</span> ড্রেস মেকিং ও অন্যান্য</li>
+                    </ul>
+
+                    <p class="text-base font-semibold text-yellow-800 mt-3 mb-2 border-b border-yellow-300 pb-1">ঐচ্ছিক বেসিক বিষয় (যে কোনো একটি সেট):</p>
+                    <ul class="space-y-1 text-gray-700 list-inside text-sm">
+                        <!-- 51811/51821, 51812/51822, 51813/51823 -->
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">➕</span> উচ্চতর গণিত সেট (৫১৮১১/৫১৮২১)</li>
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">🌾</span> কৃষিশিক্ষা সেট (৫১৮১২/৫১৮২২)</li>
+                        <li class="flex items-center"><span class="text-yellow-600 mr-2">🔬</span> জীববিজ্ঞান সেট (৫১৮১৩/৫১৮২৩)</li>
+                    </ul>
+
+                    <p class="mt-3 text-sm font-bold text-yellow-700">ডিপ্লোমা ভর্তির জন্য বিশেষ সুবিধা রয়েছে।</p>
                 </div>
                 
-                <!-- কোর্স ১: HSC (বি.এম) -->
+                <!-- কোর্স ১: HSC (বি.এম.টি) -->
                 <div class="bg-green-50 p-6 rounded-xl shadow-lg hover:shadow-2xl transition duration-300 border-t-4 border-green-600 card-hover fade-in">
-                    <h4 class="text-2xl font-bold text-green-700 mb-4">এইচ.এস.সি (বি.এম)</h4>
+                    <h4 class="text-2xl font-bold text-green-700 mb-4">এইচ.এস.সি (বি.এম.টি)</h4>
                     <ul class="space-y-2 text-gray-700 list-inside">
-                        <li class="flex items-center"><span class="text-green-600 mr-2">✔</span> কম্পিউটার টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-green-600 mr-2">✔</span> কম্পিউটার অপারেশন টেকনোলজি</li>
                         <li class="flex items-center"><span class="text-green-600 mr-2">✔</span> হিউম্যান রিসোর্স (HR) টেকনোলজি</li>
                         <li class="flex items-center"><span class="text-green-600 mr-2">✔</span> উদ্যোগ টেকনোলজি</li>
                     </ul>
                 </div>
 
-                <!-- কোর্স ২: ডিপ্লোমা ইন ইঞ্জিনিয়ারিং -->
+                <!-- কোর্স ২: ডিপ্লোমা ইন ইঞ্জিনিয়ারিং (নতুন টেকনোলজি যোগ করা হলো) -->
                 <div class="bg-blue-50 p-6 rounded-xl shadow-lg hover:shadow-2xl transition duration-300 border-t-4 border-blue-600 card-hover fade-in">
-                    <h4 class="text-2xl font-bold text-blue-700 mb-4">ডিপ্লোমা ইন ইঞ্জিনিয়ারিং</h4>
+                    <h4 class="text-2xl font-bold text-blue-700 mb-4">ডিপ্লোমা ইন ইঞ্জিনিয়ারিং</h4>
                     <ul class="space-y-2 text-gray-700 list-inside">
-                        <li class="flex items-center"><span class="text-blue-600 mr-2">✔</span> ইলেক্ট্রিক্যাল টেকনোলজি</li>
-                        <li class="flex items-center"><span class="text-blue-600 mr-2">✔</span> সিভিল টেকনোলজি</li>
-                        <li class="flex items-center"><span class="text-blue-600 mr-2">✔</span> কম্পিউটার টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-blue-600 mr-2">⚡</span> ইলেক্ট্রিক্যাল টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-blue-600 mr-2">🏗️</span> সিভিল টেকনোলজি</li>
+                        <li class="flex items-center"><span class="text-blue-600 mr-2">🖥️</span> কম্পিউটার টেকনোলজি</li>
+                        <!-- নতুন টেকনোলজি যোগ করা হলো -->
+                        <li class="flex items-center"><span class="text-blue-600 mr-2">📐</span> আর্কিটেকচার অ্যান্ড ইন্টেরিয়র ডিজাইন টেকনোলজি</li>
                     </ul>
                 </div>
 
@@ -386,15 +492,15 @@
                 <!-- বৈশিষ্ট্য ১ -->
                 <div class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition duration-300 card-hover fade-in">
                     <div class="text-4xl text-amber-500 mb-3">🎓</div>
-                    <h4 class="text-xl font-semibold mb-2 text-gray-800">১০০% সাফল্যের নিশ্চয়তা</h4>
-                    <p class="text-gray-600">ভালো ফলাফলের জন্য সর্বোচ্চ সহযোগিতা সহ ১০০% পাশের নিশ্চয়তা।</p>
+                    <h4 class="text-xl font-semibold mb-2 text-gray-800">১০০% সাফল্যের নিশ্চয়তা</h4>
+                    <p class="text-gray-600">ভালো ফলাফলের জন্য সর্বোচ্চ সহযোগিতা সহ ১০০% পাশের নিশ্চয়তা।</p>
                 </div>
 
                 <!-- বৈশিষ্ট্য ২ -->
                 <div class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition duration-300 card-hover fade-in">
                     <div class="text-4xl text-amber-500 mb-3">❌</div>
                     <h4 class="text-xl font-semibold mb-2 text-gray-800">প্রাইভেটমুক্ত শিক্ষা</h4>
-                    <p class="text-gray-600">শিক্ষার্থীদেরকে আলাদা কোনো প্রাইভেট পড়ার প্রয়োজন হয় না—সময় ও অর্থ সাশ্রয়।</p>
+                    <p class="text-gray-600">শিক্ষার্থীদেরকে আলাদা কোনো প্রাইভেট পড়ার প্রয়োজন হয় না—সময় ও অর্থ সাশ্রয়।</p>
                 </div>
 
                 <!-- বৈশিষ্ট্য ৩ -->
@@ -421,9 +527,11 @@
             <p class="text-xl mb-6 mt-4 fade-in">আপনার আসন নিশ্চিত করতে দ্রুত যোগাযোগ করুন।</p>
 
             <div class="bg-indigo-800 p-8 rounded-xl shadow-2xl max-w-lg mx-auto fade-in">
-                <p class="text-2xl font-bold mb-4">প্রতিষ্ঠান কার্যালয়:</p>
-                <p class="text-lg mb-4">
-                    প্রতিষ্ঠান টেইলারি/সি রেড, শ্রীপুর পৌরসভা। শ্রীপুর চৌরাস্তার উত্তর পাশে গোরাটি রোড, শ্রীপুর, গাজীপুর।
+                <p class="text-2xl font-bold mb-4">প্রতিষ্ঠান কার্যালয়:</p>
+                
+                <!-- সঠিক ঠিকানা আপডেট করা হয়েছে -->
+                <p class="text-lg mb-4 font-semibold text-amber-200">
+                    House No: 435, Block: C, Ward No: 01, Sreepur Paurashava, Sreepur, Gazipur-1740.
                 </p>
 
                 <p class="text-2xl font-bold mt-6 mb-2">যোগাযোগের মোবাইল নম্বর:</p>
@@ -453,7 +561,8 @@
     <footer class="bg-gray-900 text-gray-400 p-6 text-center text-sm">
         <div class="container mx-auto">
             &copy; ২০২৫ সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট। সর্বস্বত্ব সংরক্ষিত।
-            <p class="mt-2">ঠিকানা কোড: 6F5C+44Q, মাওনা।</p>
+            <!-- ফুটারের ঠিকানা ও কোড আপডেট করা হয়েছে -->
+            <p class="mt-2">ঠিকানা: House No: 435, Block: C, Sreepur, Gazipur-1740.</p>
             <p class="mt-2">
                 <a href="https://www.facebook.com/city.information.technology" target="_blank" class="text-indigo-400 hover:text-indigo-300 transition duration-300">
                     <i class="fab fa-facebook-f mr-1"></i> ফেসবুক
@@ -472,6 +581,8 @@
         const authForm = document.getElementById('auth-form');
         const authTitle = document.getElementById('auth-title');
         const authSubmit = document.getElementById('auth-submit');
+        const authSubmitText = document.getElementById('auth-submit-text');
+        const authSpinner = document.getElementById('auth-spinner');
         const authError = document.getElementById('auth-error');
         const roleSelection = document.getElementById('role-selection');
         const authButtons = document.getElementById('auth-buttons');
@@ -483,6 +594,14 @@
         const extraSignupFields = document.getElementById('extra-signup-fields');
         const captchaSection = document.getElementById('captcha-section');
         const roleRadios = document.querySelectorAll('input[name="userRole"]');
+
+        const authEmailInput = document.getElementById('auth-email');
+        const authPasswordInput = document.getElementById('auth-password');
+        const authNameInput = document.getElementById('auth-name');
+        const authBoardIdInput = document.getElementById('auth-board-id');
+        const authBirthIdInput = document.getElementById('auth-birth-id');
+        const captchaQuestionSpan = document.getElementById('captcha-question');
+        const captchaAnswerInput = document.getElementById('captcha-answer');
 
         // Captcha variable
         window.captchaAnswer = 0;
@@ -497,7 +616,7 @@
             return new Promise(resolve => setTimeout(resolve, ms));
         }
 
-        // Function to call the Gemini API with backoff
+        // Function to call the Gemini API with backoff (Completed)
         async function callGeminiAPI(systemInstruction, userQuery) {
             const maxRetries = 5;
             for (let i = 0; i < maxRetries; i++) {
@@ -524,347 +643,478 @@
                             return candidate.content.parts[0].text;
                         }
                         throw new Error("Invalid API response structure.");
-                    } else if (response.status === 429 && i < maxRetries - 1) {
-                        // Rate limit error, wait and retry
-                        const backoffTime = Math.pow(2, i) * 1000 + Math.random() * 1000;
-                        console.warn(`Rate limit hit. Retrying in ${backoffTime / 1000}s...`);
-                        await delay(backoffTime);
+                    } else if (response.status === 429) {
+                        console.warn(`Rate limit exceeded. Retrying in ${Math.pow(2, i) * 1000}ms...`);
+                        await delay(Math.pow(2, i) * 1000 + Math.random() * 1000); // Exponential backoff with jitter
                     } else {
                         throw new Error(`API call failed with status: ${response.status}`);
                     }
                 } catch (error) {
                     if (i === maxRetries - 1) {
                         console.error("Gemini API call failed after multiple retries:", error);
-                        throw new Error("API call failed after multiple retries.");
+                        return "দুঃখিত, এআই পরিষেবা বর্তমানে উপলব্ধ নয়। পরে চেষ্টা করুন।"; // Sorry, AI service is not available now. Try later.
                     }
-                    // Continue loop for retry
+                    await delay(Math.pow(2, i) * 1000 + Math.random() * 500);
                 }
             }
+            return "দুঃখিত, এআই পরিষেবা থেকে কোনো উত্তর পাওয়া যায়নি।"; // Sorry, no answer received from AI service.
         }
 
-        // Function to set up the AI assistant button event listener
-        function setupAiAssistant() {
-            const askAiBtn = document.getElementById('ask-ai-btn');
-            if (!askAiBtn) return; // If button is not in DOM, exit
-
-            askAiBtn.onclick = async () => {
-                const queryText = document.getElementById('ai-query').value.trim();
-                const responseBox = document.getElementById('ai-response-box');
-                const responseText = document.getElementById('ai-response-text');
-                const errorBox = document.getElementById('ai-error-box');
-                const btnText = document.getElementById('ai-btn-text');
-                const loader = document.getElementById('ai-loader');
-
-                if (!queryText) {
-                    errorBox.textContent = "অনুগ্রহ করে আপনার প্রশ্নটি লিখুন।";
-                    errorBox.classList.remove('hidden');
-                    responseBox.classList.add('hidden');
-                    return;
-                }
-
-                // Setup loading state
-                responseBox.classList.add('hidden');
-                errorBox.classList.add('hidden');
-                btnText.textContent = 'লোড হচ্ছে...';
-                loader.classList.remove('hidden');
-                askAiBtn.disabled = true;
-
-                const role = askAiBtn.getAttribute('data-role');
-                const systemPrompt = askAiBtn.getAttribute('data-prompt');
-
-                // Enhance the prompt with context
-                const finalPrompt = `ব্যবহারকারীর ভূমিকা: ${role === 'teacher' ? 'শিক্ষক' : 'শিক্ষার্থী'}। প্রশ্ন: ${queryText}`;
-                
-                try {
-                    const aiResponse = await callGeminiAPI(systemPrompt, finalPrompt);
-                    responseText.innerHTML = aiResponse.replace(/\n/g, '<br>'); // Preserve line breaks
-                    responseBox.classList.remove('hidden');
-                } catch (error) {
-                    console.error("Gemini call failed:", error);
-                    errorBox.textContent = "দুঃখিত, এআই সহায়কের সাথে সংযোগ স্থাপন করা যায়নি। আবার চেষ্টা করুন।";
-                    errorBox.classList.remove('hidden');
-                } finally {
-                    btnText.textContent = 'জিজ্ঞাসা করুন ✨';
-                    loader.classList.add('hidden');
-                    askAiBtn.disabled = false;
-                }
-            };
-        }
-
-        // CAPTCHA generation function
+        // ক্যাপচা তৈরি করা
         function generateCaptcha() {
-            const num1 = Math.floor(Math.random() * 10) + 1; // 1 to 10
-            const num2 = Math.floor(Math.random() * 10) + 1; // 1 to 10
+            const num1 = Math.floor(Math.random() * 10) + 1;
+            const num2 = Math.floor(Math.random() * 10) + 1;
             window.captchaAnswer = num1 + num2;
-            document.getElementById('captcha-question').textContent = `${num1} + ${num2} = ?`;
-            document.getElementById('captcha-answer').value = ''; // Clear previous input
+            captchaQuestionSpan.textContent = `${num1} + ${num2} = ?`;
+            captchaAnswerInput.value = '';
         }
 
-        // নতুন ফাংশন: ভূমিকা (Role) অনুযায়ী সাইনআপ ফিল্ড দেখানো/লুকানো
-        function toggleSignupFieldsByRole() {
-            if (isLoginMode) return; // শুধুমাত্র সাইনআপ মোডে কাজ করবে
-
-            const selectedRole = document.querySelector('input[name="userRole"]:checked')?.value;
-            const boardIdInput = document.getElementById('auth-board-id');
-            const birthIdInput = document.getElementById('auth-birth-id');
-            const captchaInput = document.getElementById('captcha-answer');
-
-            if (selectedRole === 'student') {
-                // শিক্ষার্থীর জন্য আবশ্যকীয়
-                extraSignupFields.classList.remove('hidden');
-                captchaSection.classList.remove('hidden');
-
-                // HTML5 required অ্যাট্রিবিউট যোগ করা হলো
-                boardIdInput.setAttribute('required', 'required');
-                birthIdInput.setAttribute('required', 'required');
-                captchaInput.setAttribute('required', 'required');
-                generateCaptcha(); // ক্যাপচা জেনারেট করা হলো
-            } else {
-                // শিক্ষকের জন্য ঐচ্ছিক (লুকানো)
-                extraSignupFields.classList.add('hidden');
-                captchaSection.classList.add('hidden');
-
-                // HTML5 required অ্যাট্রিবিউট সরানো হলো
-                boardIdInput.removeAttribute('required');
-                birthIdInput.removeAttribute('required');
-                captchaInput.removeAttribute('required');
-            }
-        }
-
-
-        // --- UI আপডেট ফাংশন ---
-        function updateModalUI() {
-            authError.classList.add('hidden');
-
-            if (isLoginMode) {
-                authTitle.textContent = 'ইউজার লগইন';
-                authSubmit.textContent = 'লগইন করুন';
-                roleSelection.classList.add('hidden');
-                // লগইন মোডে সাইনআপ ফিল্ড লুকানো
-                extraSignupFields.classList.add('hidden');
-                captchaSection.classList.add('hidden');
-            } else {
-                authTitle.textContent = 'নতুন ইউজার সাইনআপ';
-                authSubmit.textContent = 'সাইনআপ করুন';
-                roleSelection.classList.remove('hidden');
-                // সাইনআপ মোডে ভূমিকা অনুযায়ী ফিল্ড দেখানো
-                toggleSignupFieldsByRole(); 
-            }
-        }
-
-        // লগইন স্ট্যাটাস অনুযায়ী নেভিগেশন বার এবং ড্যাশবোর্ড আপডেট করা
-        function updateUIForUser() {
-            if (!window.isAuthReady) return;
-
-            const user = window.auth.currentUser;
-            const role = window.currentUserRole;
-
-            if (user && user.email) {
-                // ইউজার লগইন করা আছে
-                authButtons.classList.add('hidden');
-                userInfo.classList.remove('hidden');
-                welcomeMessage.textContent = `স্বাগতম, (${role === 'teacher' ? 'শিক্ষক' : 'শিক্ষার্থী'})`;
-                
-                // ড্যাশবোর্ড কন্টেন্ট দেখান
-                dashboardView.classList.remove('hidden');
-                dashboardContent.innerHTML = generateDashboardContent(user.email, role, user.uid);
-                setupAiAssistant(); // AI অ্যাসিস্ট্যান্ট সেটআপ
-
-            } else {
-                // ইউজার লগইন করা নেই (বা শুধুমাত্র অ্যানোনিমাস)
-                authButtons.classList.remove('hidden');
-                userInfo.classList.add('hidden');
-                dashboardView.classList.add('hidden');
-            }
-        }
-
-        // রোল অনুযায়ী ড্যাশবোর্ড কন্টেন্ট তৈরি করা
-        function generateDashboardContent(email, role, userId) {
-            let content = `<p class="text-xl font-bold mb-4 text-indigo-700">অ্যাকাউন্টের তথ্য:</p>
-                           <p class="mb-2"><strong>ইউজার আইডি:</strong> ${userId}</p>
-                           <p class="mb-2"><strong>ইমেইল:</strong> ${email}</p>
-                           <p class="mb-4"><strong>ভূমিকা:</strong> ${role === 'teacher' ? 'শিক্ষক' : 'শিক্ষার্থী'}</p>`;
+        // ইউজার প্রোফাইল ডেটা Firestore এ সংরক্ষণ করা
+        async function saveUserProfile(uid, role, name, boardId = null, birthId = null) {
+            if (!window.db || !window.appId) return;
+            const userRef = doc(window.db, `artifacts/${window.appId}/users/${uid}/user_data/profile`);
             
-            const roleSpecificPrompt = role === 'teacher' 
-                ? "আপনি একজন অভিজ্ঞ শিক্ষক। সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট-এর পাঠ্যক্রম এবং প্রযুক্তির ওপর ভিত্তি করে উত্তর দিন। শিক্ষককে তার রুটিন বা পাঠদানের বিষয়বস্তু সম্পর্কে সহায়তা করুন।" 
-                : "আপনি একজন সহযোগী শিক্ষামূলক সহকারী। সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট-এর কোর্সে আগ্রহী একজন শিক্ষার্থীকে তার কোর্স নির্বাচন, চাকরির বাজার বা অধ্যয়নের কৌশল সম্পর্কে সহায়তা করুন। সংক্ষিপ্ত ও স্পষ্ট উত্তর দিন।";
+            const profileData = {
+                role: role,
+                name: name,
+                email: window.auth.currentUser.email,
+                lastLogin: new Date().toISOString()
+            };
 
-            if (role === 'teacher') {
-                content += `<div class="mt-6 bg-blue-50 p-4 rounded-lg">
-                                <p class="font-bold text-blue-700">শিক্ষক ড্যাশবোর্ড অ্যাক্সেস:</p>
-                                <p class="text-blue-600">আপনি ক্লাস রুটিন, শিক্ষার্থীদের গ্রেড এবং হাজিরা দেখতে পারবেন।</p>
-                            </div>`;
-            } else { // student
-                content += `<div class="mt-6 bg-green-50 p-4 rounded-lg">
-                                <p class="font-bold text-green-700">শিক্ষার্থী ড্যাশবোর্ড অ্যাক্সেস:</p>
-                                <p class="text-green-600">আপনি আপনার ফলাফল, ক্লাস শিডিউল এবং পরীক্ষার নোটিশ দেখতে পারবেন।</p>
-                            </div>`;
+            if (role === 'student') {
+                profileData.boardId = boardId;
+                profileData.birthId = birthId;
             }
 
-            // Gemini AI Assistant Section
-            content += `
-                <div class="mt-8 pt-6 border-t border-gray-200">
-                    <h4 class="text-2xl font-bold text-indigo-700 mb-4 flex items-center">
-                        ✨ Gemini AI শিক্ষা সহায়ক
-                    </h4>
-                    <p class="text-gray-600 mb-4">${role === 'teacher' ? 'শিক্ষক হিসেবে আপনি পাঠ পরিকল্পনা বা উন্নত শিক্ষা কৌশল সম্পর্কে জিজ্ঞাসা করতে পারেন।' : 'শিক্ষার্থী হিসেবে আপনি কোর্স, ভর্তির প্রক্রিয়া বা পরীক্ষার প্রস্তুতি সম্পর্কে জানতে চাইতে পারেন।'}</p>
-                    
-                    <textarea id="ai-query" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 mb-3" rows="3" placeholder="আপনার প্রশ্নটি লিখুন... যেমন: 'ডিপ্লোমা ইঞ্জিনিয়ারিং-এ ভর্তির সুবিধা কী?'"></textarea>
-                    
-                    <button id="ask-ai-btn" data-role="${role}" data-prompt="${roleSpecificPrompt}" class="bg-amber-500 text-indigo-900 px-6 py-2 rounded-lg font-bold hover:bg-amber-400 transition duration-300 flex items-center justify-center">
-                        <span id="ai-btn-text">জিজ্ঞাসা করুন ✨</span>
-                        <div id="ai-loader" class="loader ml-3 hidden"></div>
-                    </button>
-
-                    <div id="ai-response-box" class="mt-6 p-4 bg-indigo-50 border border-indigo-200 rounded-lg hidden">
-                        <p class="font-bold text-indigo-700 mb-2">AI উত্তর:</p>
-                        <div id="ai-response-text" class="text-gray-800 whitespace-pre-wrap"></div>
-                    </div>
-                    
-                    <div id="ai-error-box" class="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg hidden">
-                        <p>দুঃখিত, বর্তমানে সহায়ক উপলব্ধ নয়। অনুগ্রহ করে আবার চেষ্টা করুন।</p>
-                    </div>
-                </div>
-            `;
-            return content;
+            try {
+                await setDoc(userRef, profileData, { merge: true });
+                console.log("User profile saved successfully.");
+                return true;
+            } catch (error) {
+                console.error("Error saving user profile:", error);
+                return false;
+            }
         }
 
-        // --- ইভেন্ট হ্যান্ডলার্স (Authentication) ---
+        // লগইন হ্যান্ডলার
+        async function handleLogin(email, password) {
+            try {
+                const userCredential = await signInWithEmailAndPassword(window.auth, email, password);
+                const user = userCredential.user;
+                // লগইন সফল হলে UI আপডেট হবে onAuthStateChanged listener এর মাধ্যমে
+                return true;
+            } catch (error) {
+                let errorMessage = "লগইন ব্যর্থ হয়েছে। ইমেইল বা পাসওয়ার্ড ভুল।";
+                if (error.code === 'auth/user-not-found') {
+                    errorMessage = "এই ইমেইল দিয়ে কোনো ইউজার পাওয়া যায়নি।";
+                } else if (error.code === 'auth/wrong-password') {
+                    errorMessage = "পাসওয়ার্ড ভুল।";
+                }
+                authError.textContent = errorMessage;
+                authError.classList.remove('hidden');
+                return false;
+            }
+        }
 
-        loginBtn.onclick = () => {
-            isLoginMode = true;
-            updateModalUI();
-            authModal.style.display = 'block';
-        };
+        // সাইনআপ হ্যান্ডলার
+        async function handleSignUp(email, password, name, role, boardId, birthId, captchaResponse) {
+            // ক্যাপচা চেক (শুধুমাত্র শিক্ষার্থীর জন্য)
+            if (role === 'student' && parseInt(captchaResponse) !== window.captchaAnswer) {
+                authError.textContent = "ক্যাপচা উত্তর ভুল হয়েছে। আবার চেষ্টা করুন।";
+                authError.classList.remove('hidden');
+                generateCaptcha(); // নতুন ক্যাপচা তৈরি
+                return false;
+            }
 
-        signupBtn.onclick = () => {
-            isLoginMode = false;
-            updateModalUI();
-            authModal.style.display = 'block';
-        };
+            try {
+                const userCredential = await createUserWithEmailAndPassword(window.auth, email, password);
+                const user = userCredential.user;
 
-        closeBtn.onclick = () => {
+                // প্রোফাইল ডেটা সংরক্ষণ
+                await saveUserProfile(user.uid, role, name, boardId, birthId);
+
+                // সফল সাইনআপের পর onAuthStateChanged listener UI আপডেট করবে
+                return true;
+            } catch (error) {
+                let errorMessage = "সাইনআপ ব্যর্থ হয়েছে।";
+                if (error.code === 'auth/email-already-in-use') {
+                    errorMessage = "এই ইমেইলটি ইতিমধ্যেই ব্যবহৃত হয়েছে। লগইন করুন।";
+                } else if (error.code === 'auth/weak-password') {
+                    errorMessage = "পাসওয়ার্ডটি খুবই দুর্বল। কমপক্ষে ৬ অক্ষরের পাসওয়ার্ড দিন।";
+                }
+                authError.textContent = errorMessage;
+                authError.classList.remove('hidden');
+                return false;
+            }
+        }
+
+        // মডাল UI এবং মোড পরিবর্তন
+        function setModalMode(isLogin) {
+            isLoginMode = isLogin;
+            authForm.reset();
+            authError.classList.add('hidden');
+            
+            const titleText = isLogin ? "ইউজার লগইন" : "ইউজার সাইনআপ";
+            const buttonText = isLogin ? "লগইন করুন" : "সাইনআপ করুন";
+            
+            authTitle.textContent = titleText;
+            authSubmitText.textContent = buttonText;
+            authNameInput.closest('div').classList.toggle('hidden', isLogin);
+            roleSelection.classList.toggle('hidden', isLogin);
+            
+            // সাইনআপ মোডে শিক্ষার্থীর জন্য অতিরিক্ত ফিল্ড দেখানো
+            const selectedRole = document.querySelector('input[name="userRole"]:checked')?.value || 'student';
+            const isStudent = selectedRole === 'student' && !isLogin;
+
+            extraSignupFields.classList.toggle('hidden', !isStudent);
+            captchaSection.classList.toggle('hidden', !isStudent);
+            
+            if (!isLogin) {
+                generateCaptcha();
+            }
+
+            // লগইনের সময় অতিরিক্ত ফিল্ড দরকার নেই
+            authBoardIdInput.required = isStudent;
+            authBirthIdInput.required = isStudent;
+            captchaAnswerInput.required = isStudent;
+        }
+
+        // রোল পরিবর্তনের হ্যান্ডলার (শুধুমাত্র সাইনআপ মোডে)
+        roleRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                if (!isLoginMode) {
+                    const isStudent = e.target.value === 'student';
+                    extraSignupFields.classList.toggle('hidden', !isStudent);
+                    captchaSection.classList.toggle('hidden', !isStudent);
+                    
+                    if (isStudent) {
+                        generateCaptcha();
+                    }
+
+                    // প্রয়োজনীয়তা সেট করা
+                    authBoardIdInput.required = isStudent;
+                    authBirthIdInput.required = isStudent;
+                    captchaAnswerInput.required = isStudent;
+                }
+            });
+        });
+
+        // ফর্ম সাবমিট হ্যান্ডলার
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            authError.classList.add('hidden');
+            
+            const email = authEmailInput.value.trim();
+            const password = authPasswordInput.value.trim();
+            const name = authNameInput.value.trim();
+            const role = document.querySelector('input[name="userRole"]:checked')?.value;
+            const boardId = authBoardIdInput.value.trim();
+            const birthId = authBirthIdInput.value.trim();
+            const captchaResponse = captchaAnswerInput.value.trim();
+
+            if (!email || !password || (!isLoginMode && !name)) {
+                authError.textContent = "দয়া করে সব ফিল্ড পূরণ করুন।";
+                authError.classList.remove('hidden');
+                return;
+            }
+
+            // স্পিনার চালু
+            authSubmitText.textContent = isLoginMode ? "লগইন হচ্ছে..." : "সাইনআপ হচ্ছে...";
+            authSpinner.classList.remove('hidden');
+            authSubmit.disabled = true;
+
+            let success = false;
+            
+            if (isLoginMode) {
+                success = await handleLogin(email, password);
+            } else {
+                success = await handleSignUp(email, password, name, role, boardId, birthId, captchaResponse);
+            }
+
+            // স্পিনার বন্ধ
+            authSubmitText.textContent = isLoginMode ? "লগইন করুন" : "সাইনআপ করুন";
+            authSpinner.classList.add('hidden');
+            authSubmit.disabled = false;
+
+            if (success) {
+                authModal.style.display = 'none';
+            }
+        });
+
+        // সাইনআউট হ্যান্ডলার
+        signoutBtn.addEventListener('click', async () => {
+            try {
+                await window.auth.signOut();
+                console.log("User signed out.");
+            } catch (error) {
+                console.error("Signout failed:", error);
+            }
+        });
+
+        // মডাল খোলার ইভেন্ট
+        loginBtn.addEventListener('click', () => {
+            if (window.isAuthReady) {
+                setModalMode(true);
+                authModal.style.display = 'block';
+            }
+        });
+
+        signupBtn.addEventListener('click', () => {
+            if (window.isAuthReady) {
+                setModalMode(false);
+                authModal.style.display = 'block';
+            }
+        });
+
+        // মডাল বন্ধের ইভেন্ট
+        closeBtn.addEventListener('click', () => {
             authModal.style.display = 'none';
-        };
-
-        window.onclick = (event) => {
+        });
+        window.onclick = function(event) {
             if (event.target == authModal) {
                 authModal.style.display = 'none';
             }
         };
 
-        signoutBtn.onclick = async () => {
-            try {
-                await signOut(window.auth);
-                window.currentUserRole = 'guest'; // সাইন আউট হলে রোল রিসেট
-                console.log("User signed out.");
-                updateUIForUser();
-            } catch (error) {
-                console.error("Sign out error:", error.message);
-            }
-        };
+        // UI আপডেট ফাংশন
+        function updateUIForUser() {
+            if (!window.isAuthReady) return;
 
-        // ভূমিকা (Role) পরিবর্তনের ইভেন্ট লিসেনার
-        roleRadios.forEach(radio => {
-            radio.addEventListener('change', toggleSignupFieldsByRole);
-        });
+            const user = window.auth?.currentUser;
+            const role = window.currentUserRole;
+            const userName = window.currentUserName;
 
-        // ফর্ম সাবমিট লজিক (লগইন/সাইনআপ)
-        authForm.onsubmit = async (e) => {
-            e.preventDefault();
-            const email = document.getElementById('auth-email').value;
-            const password = document.getElementById('auth-password').value;
-            const role = document.querySelector('input[name="userRole"]:checked')?.value || 'student';
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-            authError.classList.add('hidden');
-            
-            try {
-                if (isLoginMode) {
-                    // লগইন
-                    await signInWithEmailAndPassword(window.auth, email, password);
-                } else {
-                    // সাইনআপ
-                    const boardId = document.getElementById('auth-board-id').value.trim();
-                    const birthId = document.getElementById('auth-birth-id').value.trim();
-                    const captchaInput = document.getElementById('captcha-answer').value.trim();
-                    
-                    let isStudentValidationPassed = true;
-
-                    // শিক্ষার্থীর জন্য অতিরিক্ত ভ্যালিডেশন
-                    if (role === 'student') {
-                        // বোর্ড আইডি এবং জন্ম নিবন্ধন আবশ্যক
-                        if (!boardId || !birthId) {
-                            authError.textContent = 'শিক্ষার্থী সাইনআপের জন্য বোর্ড আইডি ও জন্ম নিবন্ধন নম্বর আবশ্যক।';
-                            authError.classList.remove('hidden');
-                            isStudentValidationPassed = false;
-                        } else if (parseInt(captchaInput) !== window.captchaAnswer) {
-                            // ক্যাপচা ভ্যালিডেশন
-                            authError.textContent = 'রোবট যাচাইকরণ ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।';
-                            authError.classList.remove('hidden');
-                            generateCaptcha(); // ব্যর্থ হলে ক্যাপচা পরিবর্তন
-                            isStudentValidationPassed = false;
-                        }
-                    }
-
-                    if (!isStudentValidationPassed && role === 'student') {
-                        return; // যদি শিক্ষার্থী ভ্যালিডেশন ব্যর্থ হয়
-                    }
-
-                    // Firebase-এ ইউজার তৈরি করা
-                    const userCredential = await createUserWithEmailAndPassword(window.auth, email, password);
-                    const user = userCredential.user;
-                    
-                    // Firestore-এ ইউজার রোল ও তথ্য সংরক্ষণ করা
-                    const userRef = doc(window.db, `artifacts/${appId}/users/${user.uid}/user_data/profile`);
-                    
-                    const profileData = {
-                        email: email,
-                        role: role, // 'student' বা 'teacher'
-                        createdAt: new Date().toISOString()
-                    };
-                    
-                    // শিক্ষার্থীর তথ্য শুধুমাত্র student রোলের জন্য সংরক্ষণ করা
-                    if (role === 'student') {
-                         profileData.boardId = boardId;
-                         profileData.birthId = birthId;
-                    }
-
-                    await setDoc(userRef, profileData);
-                }
+            if (user && !user.isAnonymous) {
+                // লগইন করা ইউজার
+                authButtons.classList.add('hidden');
+                userInfo.classList.remove('hidden');
+                userInfo.classList.add('flex');
                 
-                authModal.style.display = 'none';
-                // onAuthStateChanged স্বয়ংক্রিয়ভাবে UI আপডেট করবে
-            } catch (error) {
-                console.error("Authentication failed:", error.code, error.message);
-                authError.textContent = 'লগইন/সাইনআপ ব্যর্থ: ' + (error.code === 'auth/email-already-in-use' ? 'ইমেইলটি ইতিমধ্যেই ব্যবহৃত হয়েছে।' : 'ইমেইল বা পাসওয়ার্ড ভুল।');
-                authError.classList.remove('hidden');
+                welcomeMessage.textContent = `স্বাগতম, ${userName} (${role === 'student' ? 'শিক্ষার্থী' : 'শিক্ষক'})!`;
+
+                // ড্যাশবোর্ড দেখাও
+                dashboardView.classList.remove('hidden');
+                renderDashboard(role);
+            } else {
+                // লগআউট করা বা অ্যানোনিমাস ইউজার
+                authButtons.classList.remove('hidden');
+                userInfo.classList.add('hidden');
+                userInfo.classList.remove('flex');
+                dashboardView.classList.add('hidden');
             }
-        };
 
-        // স্ক্রোল অ্যানিমেশন লজিক (আগের মতোই রাখা হয়েছে)
-        document.addEventListener('DOMContentLoaded', () => {
-            const observer = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        entry.target.classList.add('appear');
-                        observer.unobserve(entry.target);
+            // গ্যালারি ও অন্যান্য সেকশনগুলোতে ফেড-ইন অ্যানিমেশন যোগ করা
+            document.querySelectorAll('.fade-in').forEach(el => el.classList.add('appear'));
+        }
+        
+        // ড্যাশবোর্ড কন্টেন্ট রেন্ডার করা
+        function renderDashboard(role) {
+            dashboardContent.innerHTML = `
+                <h4 class="text-2xl font-bold mb-4 text-indigo-700">স্বাগতম, ${window.currentUserName}!</h4>
+                <p class="mb-4 text-gray-700">আপনার ইউজার আইডি: <code class="text-sm bg-gray-200 p-1 rounded-md">${window.currentUserId}</code></p>
+            `;
+
+            if (role === 'student') {
+                renderStudentDashboard();
+            } else if (role === 'teacher') {
+                renderTeacherDashboard();
+            }
+        }
+        
+        // স্টুডেন্ট ড্যাশবোর্ড: AI Academic Assistant
+        function renderStudentDashboard() {
+            dashboardContent.innerHTML += `
+                <div class="mt-8">
+                    <h5 class="text-xl font-bold text-green-700 mb-4 border-b pb-2">এআই একাডেমিক সহায়ক</h5>
+                    <p class="mb-4 text-gray-600">আমাদের কোর্স বা কারিগরি বিষয়বস্তু নিয়ে যেকোনো প্রশ্ন করুন। এআই আপনাকে সঠিক উত্তর খুঁজে দেবে।</p>
+                    
+                    <div id="ai-chat-box" class="chat-container">
+                        <div class="ai-message chat-message">
+                            নমস্কার! আমি সিটিআইটিআই-এর এআই সহকারী। আপনি এসএসসি ট্রেড, ডিপ্লোমা বা অন্য যেকোনো বিষয়ে প্রশ্ন করতে পারেন।
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 flex space-x-2">
+                        <input type="text" id="ai-input" placeholder="আপনার প্রশ্নটি লিখুন..." class="w-full p-3 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <button id="ai-send-btn" class="bg-indigo-600 text-white p-3 rounded-r-lg font-bold hover:bg-indigo-500 transition duration-300 flex items-center justify-center">
+                            <span id="ai-spinner" class="hidden loader mr-2"></span>
+                            <span>জিজ্ঞাসা করুন</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            const aiChatBox = document.getElementById('ai-chat-box');
+            const aiInput = document.getElementById('ai-input');
+            const aiSendBtn = document.getElementById('ai-send-btn');
+            const aiSpinner = document.getElementById('ai-spinner');
+
+            aiSendBtn.addEventListener('click', async () => {
+                const userQuery = aiInput.value.trim();
+                if (!userQuery) return;
+                
+                // ইউজার মেসেজ ডিসপ্লে
+                const userMsgEl = document.createElement('div');
+                userMsgEl.className = 'user-message chat-message';
+                userMsgEl.textContent = userQuery;
+                aiChatBox.appendChild(userMsgEl);
+                aiChatBox.scrollTop = aiChatBox.scrollHeight;
+                aiInput.value = '';
+
+                // এআই প্রসেসিং শুরু
+                aiSendBtn.disabled = true;
+                aiSpinner.classList.remove('hidden');
+                aiSendBtn.querySelector('span:last-child').textContent = 'প্রসেসিং...';
+
+                const systemPrompt = `আপনি সিটি ইনফরমেশন টেকনোলজি ইন্সটিটিউট-এর একজন একাডেমিক সহকারী। বাংলায় উত্তর দিন। আপনার উত্তর অবশ্যই সংক্ষিপ্ত, সহায়ক এবং শিক্ষামূলক হবে। যদি প্রশ্নটি টেকনোলজি বা একাডেমিক বিষয় সম্পর্কিত না হয়, তাহলে বিনয়ের সাথে বলুন যে আপনি শুধু শিক্ষা সংক্রান্ত বিষয়ে সাহায্য করতে পারেন।`;
+                
+                const aiResponse = await callGeminiAPI(systemPrompt, userQuery);
+
+                // এআই মেসেজ ডিসপ্লে
+                const aiMsgEl = document.createElement('div');
+                aiMsgEl.className = 'ai-message chat-message';
+                aiMsgEl.innerHTML = aiResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+                aiChatBox.appendChild(aiMsgEl);
+                aiChatBox.scrollTop = aiChatBox.scrollHeight;
+
+                // প্রসেসিং শেষ
+                aiSendBtn.disabled = false;
+                aiSpinner.classList.add('hidden');
+                aiSendBtn.querySelector('span:last-child').textContent = 'জিজ্ঞাসা করুন';
+            });
+        }
+        
+        // টিচার ড্যাশবোর্ড: নোটিশ ম্যানেজমেন্ট
+        let noticeUnsubscribe = null;
+
+        function renderTeacherDashboard() {
+            dashboardContent.innerHTML += `
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+                    <!-- নোটিশ পোস্ট সেকশন -->
+                    <div>
+                        <h5 class="text-xl font-bold text-red-700 mb-4 border-b pb-2">নতুন নোটিশ পোস্ট করুন</h5>
+                        <form id="notice-form" class="space-y-4 bg-red-50 p-4 rounded-lg border border-red-200">
+                            <div>
+                                <label for="notice-title" class="block text-gray-700 font-semibold mb-1">শিরোনাম:</label>
+                                <input type="text" id="notice-title" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                            </div>
+                            <div>
+                                <label for="notice-body" class="block text-gray-700 font-semibold mb-1">নোটিশের বিবরণ:</label>
+                                <textarea id="notice-body" rows="5" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" required></textarea>
+                            </div>
+                            <button type="submit" id="notice-submit" class="bg-red-600 text-white p-2 rounded-lg font-bold hover:bg-red-500 transition duration-300 w-full">
+                                নোটিশ পোস্ট করুন
+                            </button>
+                            <p id="notice-message" class="text-sm text-center text-green-600 hidden mt-2">নোটিশ সফলভাবে পোস্ট করা হয়েছে!</p>
+                        </form>
+                    </div>
+
+                    <!-- সাম্প্রতিক নোটিশসমূহ -->
+                    <div>
+                        <h5 class="text-xl font-bold text-indigo-700 mb-4 border-b pb-2">সাম্প্রতিক নোটিশসমূহ</h5>
+                        <div id="notice-list" class="space-y-3">
+                            <p class="text-center text-gray-500">নোটিশ লোড হচ্ছে...</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // নোটিশ সাবমিট হ্যান্ডলার
+            document.getElementById('notice-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const title = document.getElementById('notice-title').value.trim();
+                const body = document.getElementById('notice-body').value.trim();
+                const submitBtn = document.getElementById('notice-submit');
+                const msgEl = document.getElementById('notice-message');
+
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'পোস্ট করা হচ্ছে...';
+                msgEl.classList.add('hidden');
+
+                if (!window.db || !window.appId) return;
+
+                const noticesCollectionRef = collection(window.db, `artifacts/${window.appId}/public/data/notices`);
+                
+                try {
+                    await addDoc(noticesCollectionRef, {
+                        title: title,
+                        body: body,
+                        timestamp: new Date().toISOString(),
+                        authorId: window.currentUserId,
+                        authorName: window.currentUserName
+                    });
+                    
+                    msgEl.textContent = 'নোটিশ সফলভাবে পোস্ট করা হয়েছে!';
+                    msgEl.classList.remove('hidden');
+                    document.getElementById('notice-form').reset();
+                } catch (error) {
+                    console.error("Error posting notice:", error);
+                    msgEl.textContent = 'পোস্ট করতে সমস্যা হয়েছে।';
+                    msgEl.classList.remove('hidden');
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'নোটিশ পোস্ট করুন';
+                }
+            });
+
+            // রিয়েল-টাইম নোটিশ লোডিং (onSnapshot)
+            if (noticeUnsubscribe) {
+                noticeUnsubscribe();
+            }
+
+            if (window.db && window.appId) {
+                const noticesCollectionRef = collection(window.db, `artifacts/${window.appId}/public/data/notices`);
+                // Firestore-এ orderBy ব্যবহার এড়ানো হয়েছে, তাই সব ডেটা এনে JS-এ সর্ট করা হবে
+                const q = query(noticesCollectionRef);
+
+                noticeUnsubscribe = onSnapshot(q, (snapshot) => {
+                    let notices = [];
+                    snapshot.forEach((doc) => {
+                        notices.push({ id: doc.id, ...doc.data() });
+                    });
+
+                    // JS-এ টাইমস্ট্যাম্প অনুসারে সর্ট করা (সাম্প্রতিকতম প্রথমে)
+                    notices.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                    
+                    const noticeList = document.getElementById('notice-list');
+                    noticeList.innerHTML = '';
+                    
+                    if (notices.length === 0) {
+                        noticeList.innerHTML = `<p class="text-center text-gray-500">এখনও কোনো নোটিশ পোস্ট করা হয়নি।</p>`;
+                        return;
                     }
+                    
+                    notices.slice(0, 5).forEach(notice => { // শুধুমাত্র প্রথম ৫টি দেখানো
+                        const date = new Date(notice.timestamp).toLocaleDateString('bn-BD');
+                        const time = new Date(notice.timestamp).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
+                        
+                        const noticeEl = document.createElement('div');
+                        noticeEl.className = 'bg-gray-50 p-3 rounded-lg border-l-4 border-indigo-500 shadow-sm';
+                        noticeEl.innerHTML = `
+                            <p class="text-lg font-bold text-indigo-800">${notice.title}</p>
+                            <p class="text-gray-700 mt-1 text-sm">${notice.body}</p>
+                            <p class="text-xs text-gray-500 mt-2">
+                                পোস্ট করেছেন: ${notice.authorName} (${date} ${time})
+                            </p>
+                        `;
+                        noticeList.appendChild(noticeEl);
+                    });
+                }, (error) => {
+                    console.error("Error fetching notices:", error);
+                    document.getElementById('notice-list').innerHTML = `<p class="text-center text-red-500">নোটিশ লোড করতে সমস্যা হয়েছে।</p>`;
                 });
-            }, {
-                threshold: 0.1
+            }
+        }
+        
+        // যখন উইন্ডো লোড হয়, UI আপডেট নিশ্চিত করা
+        if (window.isAuthReady) {
+            updateUIForUser();
+        } else {
+            // যদি onAuthStateChanged এখনও ফায়ার না হয়ে থাকে, অপেক্ষা করা হবে
+            window.addEventListener('load', () => {
+                updateUIForUser();
             });
-            document.querySelectorAll('.fade-in').forEach(element => {
-                observer.observe(element);
-            });
-            document.querySelectorAll('.fade-in').forEach((element, index) => {
-                element.style.transitionDelay = `${index * 0.1}s`;
-            });
-
-            // DOM লোড হওয়ার পর ডিফল্ট রোল অনুযায়ী সাইনআপ ফিল্ড একবার টগল করা
-            toggleSignupFieldsByRole();
-        });
+        }
     </script>
-
 </body>
 </html>
